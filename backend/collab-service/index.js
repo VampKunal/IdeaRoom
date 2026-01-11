@@ -49,6 +49,26 @@ io.on("connection", (socket) => {
       socket.emit("error", "Invalid room ID");
     }
   });
+  socket.on("object-create", async ({ roomId, object }) => {
+  const key = `room:${roomId}:state`;
+
+  let state = await redisClient.get(key);
+  state = state ? JSON.parse(state) : { objects: [] };
+
+  state.objects.push(object);
+  await redisClient.set(key, JSON.stringify(state));
+
+  // publish event
+  publishEvent({
+    roomId,
+    type: "OBJECT_CREATED",
+    payload: object,
+    timestamp: Date.now(),
+  });
+
+  io.to(roomId).emit("object-created", object);
+});
+
 
   // tool event
   socket.on("room-message", async ({ roomId, message }) => {
@@ -86,11 +106,36 @@ io.on("connection", (socket) => {
       message,
     });
   });
+  socket.on("object-move", async ({ roomId, object }) => {
+  const key = `room:${roomId}:state`;
+
+  let state = await redisClient.get(key);
+  state = state ? JSON.parse(state) : { objects: [] };
+
+  state.objects = state.objects.map((o) =>
+    o.id === object.id ? object : o
+  );
+
+  await redisClient.set(key, JSON.stringify(state));
+
+  publishEvent({
+    roomId,
+    type: "OBJECT_MOVED",
+    payload: object,
+    timestamp: Date.now(),
+  });
+
+  socket.to(roomId).emit("object-moved", object);
+});
+
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
 });
+
+
+
 
 // health
 app.get("/health", (req, res) => {
