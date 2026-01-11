@@ -24,7 +24,7 @@ connectRabbit();
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // join room
+  /* ---------------- JOIN ROOM ---------------- */
   socket.on("join-room", async (roomId) => {
     try {
       // validate room via API Gateway
@@ -32,7 +32,6 @@ io.on("connection", (socket) => {
 
       socket.join(roomId);
 
-      // send redis state if exists
       const key = `room:${roomId}:state`;
       const state = await redisClient.get(key);
 
@@ -49,95 +48,137 @@ io.on("connection", (socket) => {
       socket.emit("error", "Invalid room ID");
     }
   });
-  socket.on("object-create", async ({ roomId, object }) => {
+  /* ---------------- REQUEST-ROOM-STATE---------------- */
+  socket.on("request-room-state", async (roomId) => {
   const key = `room:${roomId}:state`;
+  const state = await redisClient.get(key);
 
-  let state = await redisClient.get(key);
-  state = state ? JSON.parse(state) : { objects: [] };
-
-  state.objects.push(object);
-  await redisClient.set(key, JSON.stringify(state));
-
-  // publish event
-  publishEvent({
-    roomId,
-    type: "OBJECT_CREATED",
-    payload: object,
-    timestamp: Date.now(),
+  if (state) {
+    socket.emit("room-state", JSON.parse(state));
+  }
   });
 
-  io.to(roomId).emit("object-created", object);
-});
-
-
-  // tool event
-  socket.on("room-message", async ({ roomId, message }) => {
+  /* ---------------- OBJECT CREATE ---------------- */
+  socket.on("object-create", async ({ roomId, object }) => {
     const key = `room:${roomId}:state`;
 
     let state = await redisClient.get(key);
     state = state ? JSON.parse(state) : { objects: [] };
 
-    const event = {
-      roomId,
-      type: "TEXT_ADDED",
-      payload: {
-        value: message,
-        from: socket.id,
-      },
-      timestamp: Date.now(),
+    // ✅ backend is the authority for timestamps
+    const enrichedObject = {
+      ...object,
+      createdAt: Date.now(),
     };
 
-    // update redis
-    state.objects.push({
-      id: event.timestamp,
-      type: "TEXT",
-      value: message,
-      from: socket.id,
+    state.objects.push(enrichedObject);
+    await redisClient.set(key, JSON.stringify(state));
+
+    publishEvent({
+      roomId,
+      type: "OBJECT_CREATED",
+      payload: enrichedObject,
+      timestamp: Date.now(),
     });
+
+    io.to(roomId).emit("object-created", enrichedObject);
+  });
+
+  /* ---------------- OBJECT UPDATE (TEXT EDIT) ---------------- */
+  socket.on("object-update", async ({ roomId, object }) => {
+    const key = `room:${roomId}:state`;
+
+    let state = await redisClient.get(key);
+    state = state ? JSON.parse(state) : { objects: [] };
+
+    const updatedObject = {
+      ...object,
+      updatedAt: Date.now(),
+    };
+
+    state.objects = state.objects.map((o) =>
+      o.id === updatedObject.id ? updatedObject : o
+    );
 
     await redisClient.set(key, JSON.stringify(state));
 
-    // publish durable event
-    publishEvent(event);
-
-    // broadcast
-    io.to(roomId).emit("room-message", {
-      from: socket.id,
-      message,
+    publishEvent({
+      roomId,
+      type: "OBJECT_UPDATED",
+      payload: updatedObject,
+      timestamp: Date.now(),
     });
+
+    socket.to(roomId).emit("object-updated", updatedObject);
   });
+
+  /* ---------------- OBJECT MOVE ---------------- */
   socket.on("object-move", async ({ roomId, object }) => {
+    const key = `room:${roomId}:state`;
+
+    let state = await redisClient.get(key);
+    state = state ? JSON.parse(state) : { objects: [] };
+
+    const movedObject = {
+      ...object,
+      updatedAt: Date.now(),
+    };
+
+    state.objects = state.objects.map((o) =>
+      o.id === movedObject.id ? movedObject : o
+    );
+
+    await redisClient.set(key, JSON.stringify(state));
+
+    publishEvent({
+      roomId,
+      type: "OBJECT_MOVED",
+      payload: movedObject,
+      timestamp: Date.now(),
+    });
+
+    socket.to(roomId).emit("object-moved", movedObject);
+  });
+  /* ---------------- OBJECT-MOVE ---------------- */
+socket.on("objects-move", async ({ roomId, ids, delta }) => {
   const key = `room:${roomId}:state`;
 
   let state = await redisClient.get(key);
   state = state ? JSON.parse(state) : { objects: [] };
 
-  state.objects = state.objects.map((o) =>
-    o.id === object.id ? object : o
-  );
+  state.objects = state.objects.map((o) => {
+    if (ids.includes(o.id)) {
+      return {
+        ...o,
+        x: o.x + delta.dx,
+        y: o.y + delta.dy,
+        updatedAt: Date.now(),
+      };
+    }
+    return o;
+  });
 
   await redisClient.set(key, JSON.stringify(state));
 
   publishEvent({
     roomId,
-    type: "OBJECT_MOVED",
-    payload: object,
+    type: "OBJECTS_MOVED",
+    payload: { ids, delta },
     timestamp: Date.now(),
   });
 
-  socket.to(roomId).emit("object-moved", object);
+  socket.to(roomId).emit("objects-moved", { ids, delta });
 });
 
 
+
+  /* ---------------- DISCONNECT ---------------- */
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
 });
 
-
-
-
-// health
+/* ---------------- HEALTH ---------------- */
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "collab-service" });
 });

@@ -9,10 +9,23 @@ export default function RoomPage({ params }) {
   const [room, setRoom] = useState(null);
   const [objects, setObjects] = useState([]);
 
-  const [draggingId, setDraggingId] = useState(null);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  // selection
+  const [selectedIds, setSelectedIds] = useState([]);
 
-  // unwrap params (Next.js App Router requirement)
+  // edge creation
+  const [edgeStart, setEdgeStart] = useState(null);
+
+  // drag state
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOrigin, setDragOrigin] = useState(null);
+  const [dragStartMouse, setDragStartMouse] = useState(null);
+  const [dragDelta, setDragDelta] = useState({ dx: 0, dy: 0 });
+
+  // text edit
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
+
+  /* ---------------- PARAMS ---------------- */
   useEffect(() => {
     async function unwrap() {
       const resolved = await params;
@@ -21,37 +34,34 @@ export default function RoomPage({ params }) {
     unwrap();
   }, [params]);
 
-  // load room info
+  /* ---------------- LOAD ROOM ---------------- */
   useEffect(() => {
     if (!roomId) return;
-
-    async function load() {
-      const data = await getRoom(roomId);
-      setRoom(data);
-    }
-
-    load();
+    getRoom(roomId).then(setRoom);
   }, [roomId]);
 
-  // socket connection
+  /* ---------------- SOCKET ---------------- */
   useEffect(() => {
     if (!roomId) return;
 
     const socket = connectSocket();
 
     socket.on("connect", () => {
-      console.log("CONNECTED:", socket.id);
       socket.emit("join-room", roomId);
     });
 
     socket.on("room-state", (state) => {
-      if (state?.objects) {
-        setObjects(state.objects);
-      }
+      if (state?.objects) setObjects(state.objects);
     });
 
     socket.on("object-created", (obj) => {
       setObjects((prev) => [...prev, obj]);
+    });
+
+    socket.on("object-updated", (obj) => {
+      setObjects((prev) =>
+        prev.map((o) => (o.id === obj.id ? obj : o))
+      );
     });
 
     socket.on("object-moved", (obj) => {
@@ -60,88 +70,184 @@ export default function RoomPage({ params }) {
       );
     });
 
+    socket.on("objects-moved", ({ ids, delta }) => {
+      setObjects((prev) =>
+        prev.map((o) =>
+          ids.includes(o.id)
+            ? { ...o, x: o.x + delta.dx, y: o.y + delta.dy }
+            : o
+        )
+      );
+    });
+
     return () => {
       socket.off("connect");
       socket.off("room-state");
       socket.off("object-created");
+      socket.off("object-updated");
       socket.off("object-moved");
+      socket.off("objects-moved");
     };
   }, [roomId]);
 
-  // drag logic
+  /* ---------------- SELECTION ---------------- */
+  function handleSelect(e, id) {
+    e.stopPropagation();
+
+    if (e.shiftKey) {
+      setSelectedIds((prev) =>
+        prev.includes(id)
+          ? prev.filter((x) => x !== id)
+          : [...prev, id]
+      );
+    } else {
+      setSelectedIds([id]);
+    }
+  }
+
+  /* ---------------- DRAG ---------------- */
   function onMouseDown(e, obj) {
+    handleSelect(e, obj.id);
+
     setDraggingId(obj.id);
-    setOffset({
-      x: e.clientX - obj.x,
-      y: e.clientY - obj.y,
+    setDragStartMouse({ x: e.clientX, y: e.clientY });
+
+    const ids = selectedIds.includes(obj.id)
+      ? selectedIds
+      : [obj.id];
+
+    const origin = {};
+    ids.forEach((id) => {
+      const o = objects.find((x) => x.id === id);
+      if (o) origin[id] = { x: o.x, y: o.y };
     });
+
+    setDragOrigin(origin);
   }
 
   function onMouseMove(e) {
-    if (!draggingId) return;
+    if (!draggingId || !dragStartMouse || !dragOrigin) return;
+
+    const dx = e.clientX - dragStartMouse.x;
+    const dy = e.clientY - dragStartMouse.y;
+
+    setDragDelta({ dx, dy });
 
     setObjects((prev) =>
-      prev.map((obj) =>
-        obj.id === draggingId
-          ? { ...obj, x: e.clientX - offset.x, y: e.clientY - offset.y }
-          : obj
+      prev.map((o) =>
+        dragOrigin[o.id]
+          ? {
+              ...o,
+              x: dragOrigin[o.id].x + dx,
+              y: dragOrigin[o.id].y + dy,
+            }
+          : o
       )
     );
   }
 
   function onMouseUp() {
-    if (!draggingId) return;
+    if (!draggingId || !dragOrigin) return;
 
-    const moved = objects.find((o) => o.id === draggingId);
-    const socket = connectSocket();
-
-    socket.emit("object-move", {
+    connectSocket().emit("objects-move", {
       roomId,
-      object: moved,
+      ids: Object.keys(dragOrigin),
+      delta: dragDelta,
     });
 
     setDraggingId(null);
+    setDragOrigin(null);
+    setDragStartMouse(null);
+    setDragDelta({ dx: 0, dy: 0 });
   }
 
-  // attach global mouse listeners
   useEffect(() => {
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
-
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
   });
 
-  // add text block
-  function addTextBlock() {
-    const socket = connectSocket();
-
-    const obj = {
-      id: crypto.randomUUID(),
-      type: "TEXT",
-      x: 100 + Math.random() * 200,
-      y: 100 + Math.random() * 200,
-      data: { text: "New Idea" },
-      createdAt: Date.now(),
-    };
-
-    socket.emit("object-create", {
+  /* ---------------- TOOLS ---------------- */
+  function addText() {
+    connectSocket().emit("object-create", {
       roomId,
-      object: obj,
+      object: {
+        id: crypto.randomUUID(),
+        type: "TEXT",
+        x: 120,
+        y: 120,
+        data: { text: "New Idea" },
+      },
     });
+  }
+
+  function addNode() {
+    connectSocket().emit("object-create", {
+      roomId,
+      object: {
+        id: crypto.randomUUID(),
+        type: "NODE",
+        x: 200,
+        y: 200,
+        data: { label: "New Node" },
+      },
+    });
+  }
+
+  function addShape(shape) {
+    connectSocket().emit("object-create", {
+      roomId,
+      object: {
+        id: crypto.randomUUID(),
+        type: "SHAPE",
+        x: 150,
+        y: 150,
+        data:
+          shape === "rect"
+            ? { shape: "rect", width: 140, height: 90, color: "#D0EBFF" }
+            : { shape: "circle", radius: 50, color: "#FFD8A8" },
+      },
+    });
+  }
+
+  function createEdge(from, to) {
+    connectSocket().emit("object-create", {
+      roomId,
+      object: {
+        id: crypto.randomUUID(),
+        type: "EDGE",
+        data: { from, to },
+      },
+    });
+  }
+
+  function saveEdit(obj) {
+    const updated = { ...obj, data: { text: editValue } };
+    connectSocket().emit("object-update", { roomId, object: updated });
+    setEditingId(null);
   }
 
   if (!room) return <p style={{ padding: 40 }}>Loading...</p>;
 
+  const nodeMap = Object.fromEntries(
+    objects.filter((o) => o.type === "NODE").map((n) => [n.id, n])
+  );
+
+  /* ---------------- UI ---------------- */
   return (
     <main style={{ padding: 20 }}>
       <h1>{room.title}</h1>
 
-      <button onClick={addTextBlock}>➕ Add Text</button>
+      <button onClick={addText}>➕ Text</button>
+      <button onClick={() => addShape("rect")}>⬛ Rect</button>
+      <button onClick={() => addShape("circle")}>⚪ Circle</button>
+      <button onClick={addNode}>➕ Node</button>
 
       <div
+        onMouseDown={() => setSelectedIds([])}
         style={{
           marginTop: 20,
           width: "100%",
@@ -150,25 +256,138 @@ export default function RoomPage({ params }) {
           position: "relative",
         }}
       >
-        {objects.map((obj) => (
-          <div
-            key={obj.id}
-            onMouseDown={(e) => onMouseDown(e, obj)}
-            style={{
-              position: "absolute",
-              left: obj.x,
-              top: obj.y,
-              padding: 10,
-              background: "#fff3bf",
-              border: "1px solid #f59f00",
-              borderRadius: 6,
-              cursor: "grab",
-              userSelect: "none",
-            }}
-          >
-            {obj.data?.text || "Empty"}
-          </div>
-        ))}
+        {/* EDGES */}
+        <svg
+          style={{
+            position: "absolute",
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+          }}
+        >
+          {objects
+            .filter((o) => o.type === "EDGE")
+            .map((edge) => {
+              const from = nodeMap[edge.data.from];
+              const to = nodeMap[edge.data.to];
+              if (!from || !to) return null;
+
+              return (
+                <line
+                  key={edge.id}
+                  x1={from.x + 60}
+                  y1={from.y + 20}
+                  x2={to.x + 60}
+                  y2={to.y + 20}
+                  stroke="#495057"
+                  strokeWidth="2"
+                />
+              );
+            })}
+        </svg>
+
+        {/* OBJECTS */}
+        {objects.map((obj) => {
+          const selected = selectedIds.includes(obj.id);
+
+          if (obj.type === "TEXT") {
+            return (
+              <div
+                key={obj.id}
+                onMouseDown={(e) => onMouseDown(e, obj)}
+                onDoubleClick={() => {
+                  setEditingId(obj.id);
+                  setEditValue(obj.data.text);
+                }}
+                style={{
+                  position: "absolute",
+                  left: obj.x,
+                  top: obj.y,
+                  padding: 10,
+                  background: "#fff3bf",
+                  border: selected
+                    ? "2px solid #1971c2"
+                    : "1px solid #f59f00",
+                  borderRadius: 6,
+                  cursor: "grab",
+                }}
+              >
+                {editingId === obj.id ? (
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={() => saveEdit(obj)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && saveEdit(obj)
+                    }
+                  />
+                ) : (
+                  obj.data.text
+                )}
+              </div>
+            );
+          }
+
+          if (obj.type === "NODE") {
+            return (
+              <div
+                key={obj.id}
+                onMouseDown={(e) => onMouseDown(e, obj)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!edgeStart) setEdgeStart(obj.id);
+                  else if (edgeStart !== obj.id) {
+                    createEdge(edgeStart, obj.id);
+                    setEdgeStart(null);
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  left: obj.x,
+                  top: obj.y,
+                  padding: "10px 14px",
+                  background: selected ? "#d0ebff" : "#e7f5ff",
+                  border: selected
+                    ? "2px solid #1971c2"
+                    : "1px solid #228be6",
+                  borderRadius: 6,
+                  cursor: "grab",
+                }}
+              >
+                {obj.data.label}
+              </div>
+            );
+          }
+
+          if (obj.type === "SHAPE") {
+            const isCircle = obj.data.shape === "circle";
+            return (
+              <div
+                key={obj.id}
+                onMouseDown={(e) => onMouseDown(e, obj)}
+                style={{
+                  position: "absolute",
+                  left: obj.x,
+                  top: obj.y,
+                  width: isCircle
+                    ? obj.data.radius * 2
+                    : obj.data.width,
+                  height: isCircle
+                    ? obj.data.radius * 2
+                    : obj.data.height,
+                  background: obj.data.color,
+                  outline: selected
+                    ? "2px solid #1971c2"
+                    : "none",
+                  cursor: "grab",
+                }}
+              />
+            );
+          }
+
+          return null;
+        })}
       </div>
     </main>
   );
