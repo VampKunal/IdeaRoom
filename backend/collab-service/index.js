@@ -167,7 +167,12 @@ socket.on("objects-move", async ({ roomId, ids, delta }) => {
     timestamp: Date.now(),
   });
 
-  socket.to(roomId).emit("objects-moved", { ids, delta });
+  socket.to(roomId).emit("objects-moved", {
+  ids,
+  delta,
+  source: socket.id,
+});
+
 });
 
 

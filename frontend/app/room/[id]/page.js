@@ -21,6 +21,11 @@ export default function RoomPage({ params }) {
   const [dragStartMouse, setDragStartMouse] = useState(null);
   const [dragDelta, setDragDelta] = useState({ dx: 0, dy: 0 });
 
+  // resize state (RECTANGLES ONLY)
+  const [resizingId, setResizingId] = useState(null);
+  const [resizeStartMouse, setResizeStartMouse] = useState(null);
+  const [resizeOrigin, setResizeOrigin] = useState(null);
+
   // text edit
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState("");
@@ -107,6 +112,8 @@ export default function RoomPage({ params }) {
 
   /* ---------------- DRAG ---------------- */
   function onMouseDown(e, obj) {
+    if (resizingId) return;
+
     handleSelect(e, obj.id);
 
     setDraggingId(obj.id);
@@ -161,12 +168,69 @@ export default function RoomPage({ params }) {
     setDragDelta({ dx: 0, dy: 0 });
   }
 
+  /* ---------------- RESIZE (RECT ONLY) ---------------- */
+  function onResizeMouseDown(e, obj) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    setResizingId(obj.id);
+    setResizeStartMouse({ x: e.clientX, y: e.clientY });
+
+    setResizeOrigin({
+      width: obj.data.width,
+      height: obj.data.height,
+    });
+  }
+
+  function onResizeMouseMove(e) {
+    if (!resizingId || !resizeStartMouse || !resizeOrigin) return;
+
+    const dx = e.clientX - resizeStartMouse.x;
+    const dy = e.clientY - resizeStartMouse.y;
+
+    setObjects((prev) =>
+      prev.map((o) =>
+        o.id === resizingId
+          ? {
+              ...o,
+              data: {
+                ...o.data,
+                width: Math.max(60, resizeOrigin.width + dx),
+                height: Math.max(40, resizeOrigin.height + dy),
+              },
+            }
+          : o
+      )
+    );
+  }
+
+  function onResizeMouseUp() {
+    if (!resizingId) return;
+
+    const obj = objects.find((o) => o.id === resizingId);
+    if (obj) {
+      connectSocket().emit("object-update", {
+        roomId,
+        object: obj,
+      });
+    }
+
+    setResizingId(null);
+    setResizeStartMouse(null);
+    setResizeOrigin(null);
+  }
+
   useEffect(() => {
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("mousemove", onResizeMouseMove);
+    window.addEventListener("mouseup", onResizeMouseUp);
+
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("mousemove", onResizeMouseMove);
+      window.removeEventListener("mouseup", onResizeMouseUp);
     };
   });
 
@@ -226,7 +290,17 @@ export default function RoomPage({ params }) {
 
   function saveEdit(obj) {
     const updated = { ...obj, data: { text: editValue } };
-    connectSocket().emit("object-update", { roomId, object: updated });
+
+    // optimistic update
+    setObjects((prev) =>
+      prev.map((o) => (o.id === updated.id ? updated : o))
+    );
+
+    connectSocket().emit("object-update", {
+      roomId,
+      object: updated,
+    });
+
     setEditingId(null);
   }
 
@@ -238,157 +312,203 @@ export default function RoomPage({ params }) {
 
   /* ---------------- UI ---------------- */
   return (
-    <main style={{ padding: 20 }}>
-      <h1>{room.title}</h1>
+  <main style={{ padding: 20 }}>
+    <h1>{room.title}</h1>
 
-      <button onClick={addText}>➕ Text</button>
-      <button onClick={() => addShape("rect")}>⬛ Rect</button>
-      <button onClick={() => addShape("circle")}>⚪ Circle</button>
-      <button onClick={addNode}>➕ Node</button>
+    <button onClick={addText}>➕ Text</button>
+    <button onClick={() => addShape("rect")}>⬛ Rect</button>
+    <button onClick={() => addShape("circle")}>⚪ Circle</button>
+    <button onClick={addNode}>➕ Node</button>
 
-      <div
-        onMouseDown={() => setSelectedIds([])}
+    <div
+      onMouseDown={() => setSelectedIds([])}
+      style={{
+        marginTop: 20,
+        width: "100%",
+        height: "70vh",
+        border: "1px solid #ccc",
+        position: "relative",
+      }}
+    >
+      {/* EDGES */}
+      <svg
         style={{
-          marginTop: 20,
+          position: "absolute",
           width: "100%",
-          height: "70vh",
-          border: "1px solid #ccc",
-          position: "relative",
+          height: "100%",
+          pointerEvents: "none",
         }}
       >
-        {/* EDGES */}
-        <svg
-          style={{
-            position: "absolute",
-            width: "100%",
-            height: "100%",
-            pointerEvents: "none",
-          }}
-        >
-          {objects
-            .filter((o) => o.type === "EDGE")
-            .map((edge) => {
-              const from = nodeMap[edge.data.from];
-              const to = nodeMap[edge.data.to];
-              if (!from || !to) return null;
+        {objects
+          .filter((o) => o.type === "EDGE")
+          .map((edge) => {
+            const from = nodeMap[edge.data.from];
+            const to = nodeMap[edge.data.to];
+            if (!from || !to) return null;
 
-              return (
-                <line
-                  key={edge.id}
-                  x1={from.x + 60}
-                  y1={from.y + 20}
-                  x2={to.x + 60}
-                  y2={to.y + 20}
-                  stroke="#495057"
-                  strokeWidth="2"
-                />
-              );
-            })}
-        </svg>
-
-        {/* OBJECTS */}
-        {objects.map((obj) => {
-          const selected = selectedIds.includes(obj.id);
-
-          if (obj.type === "TEXT") {
             return (
-              <div
-                key={obj.id}
-                onMouseDown={(e) => onMouseDown(e, obj)}
-                onDoubleClick={() => {
-                  setEditingId(obj.id);
-                  setEditValue(obj.data.text);
-                }}
-                style={{
-                  position: "absolute",
-                  left: obj.x,
-                  top: obj.y,
-                  padding: 10,
-                  background: "#fff3bf",
-                  border: selected
-                    ? "2px solid #1971c2"
-                    : "1px solid #f59f00",
-                  borderRadius: 6,
-                  cursor: "grab",
-                }}
-              >
-                {editingId === obj.id ? (
-                  <input
-                    autoFocus
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onBlur={() => saveEdit(obj)}
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && saveEdit(obj)
-                    }
-                  />
-                ) : (
-                  obj.data.text
-                )}
-              </div>
-            );
-          }
-
-          if (obj.type === "NODE") {
-            return (
-              <div
-                key={obj.id}
-                onMouseDown={(e) => onMouseDown(e, obj)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!edgeStart) setEdgeStart(obj.id);
-                  else if (edgeStart !== obj.id) {
-                    createEdge(edgeStart, obj.id);
-                    setEdgeStart(null);
-                  }
-                }}
-                style={{
-                  position: "absolute",
-                  left: obj.x,
-                  top: obj.y,
-                  padding: "10px 14px",
-                  background: selected ? "#d0ebff" : "#e7f5ff",
-                  border: selected
-                    ? "2px solid #1971c2"
-                    : "1px solid #228be6",
-                  borderRadius: 6,
-                  cursor: "grab",
-                }}
-              >
-                {obj.data.label}
-              </div>
-            );
-          }
-
-          if (obj.type === "SHAPE") {
-            const isCircle = obj.data.shape === "circle";
-            return (
-              <div
-                key={obj.id}
-                onMouseDown={(e) => onMouseDown(e, obj)}
-                style={{
-                  position: "absolute",
-                  left: obj.x,
-                  top: obj.y,
-                  width: isCircle
-                    ? obj.data.radius * 2
-                    : obj.data.width,
-                  height: isCircle
-                    ? obj.data.radius * 2
-                    : obj.data.height,
-                  background: obj.data.color,
-                  outline: selected
-                    ? "2px solid #1971c2"
-                    : "none",
-                  cursor: "grab",
-                }}
+              <line
+                key={edge.id}
+                x1={from.x + (from.data.width || 120) / 2}
+                y1={from.y + (from.data.height || 40) / 2}
+                x2={to.x + (to.data.width || 120) / 2}
+                y2={to.y + (to.data.height || 40) / 2}
+                stroke="#495057"
+                strokeWidth="2"
               />
             );
-          }
+          })}
+      </svg>
 
-          return null;
-        })}
-      </div>
-    </main>
+      {/* OBJECTS */}
+      {objects.map((obj) => {
+        const selected = selectedIds.includes(obj.id);
+
+        /* ---------- TEXT ---------- */
+        if (obj.type === "TEXT") {
+          return (
+            <div
+              key={obj.id}
+              onMouseDown={(e) => onMouseDown(e, obj)}
+              onDoubleClick={() => {
+                setEditingId(obj.id);
+                setEditValue(obj.data.text);
+              }}
+              style={{
+                position: "absolute",
+                left: obj.x,
+                top: obj.y,
+                padding: 10,
+                background: "#fff3bf",
+                border: selected
+                  ? "2px solid #1971c2"
+                  : "1px solid #f59f00",
+                borderRadius: 6,
+                cursor: "grab",
+              }}
+            >
+              {editingId === obj.id ? (
+                <input
+                  autoFocus
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => saveEdit(obj)}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && saveEdit(obj)
+                  }
+                />
+              ) : (
+                obj.data.text
+              )}
+            </div>
+          );
+        }
+
+        /* ---------- NODE (RESIZABLE) ---------- */
+        if (obj.type === "NODE") {
+  const width = obj.data.width || 120;
+  const height = obj.data.height || 40;
+
+  return (
+    <div
+      key={obj.id}
+      onMouseDown={(e) => onMouseDown(e, obj)}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!edgeStart) setEdgeStart(obj.id);
+        else if (edgeStart !== obj.id) {
+          createEdge(edgeStart, obj.id);
+          setEdgeStart(null);
+        }
+      }}
+      style={{
+        position: "absolute",
+        left: obj.x,
+        top: obj.y,
+        width,
+        height,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: selected ? "#d0ebff" : "#e7f5ff",
+        border: selected
+          ? "2px solid #1971c2"
+          : "1px solid #228be6",
+        borderRadius: 6,
+        cursor: "grab",
+        userSelect: "none",
+      }}
+    >
+      {obj.data.label}
+
+      {/* resize handle */}
+      {selected && (
+        <div
+          onMouseDownCapture={(e) => onResizeMouseDown(e, obj)}
+          style={{
+            position: "absolute",
+            right: -6,
+            bottom: -6,
+            width: 12,
+            height: 12,
+            background: "#1971c2",
+            cursor: "nwse-resize",
+          }}
+        />
+      )}
+    </div>
   );
+}
+
+
+        /* ---------- SHAPES ---------- */
+        if (obj.type === "SHAPE") {
+          const isCircle = obj.data.shape === "circle";
+
+          return (
+            <div
+              key={obj.id}
+              onMouseDown={(e) => onMouseDown(e, obj)}
+              style={{
+                position: "absolute",
+                left: obj.x,
+                top: obj.y,
+                width: isCircle
+                  ? obj.data.radius * 2
+                  : obj.data.width,
+                height: isCircle
+                  ? obj.data.radius * 2
+                  : obj.data.height,
+                background: obj.data.color,
+                outline: selected
+                  ? "2px solid #1971c2"
+                  : "none",
+                cursor: "grab",
+              }}
+            >
+              {/* resize handle for rectangles only */}
+              {!isCircle && selected && (
+                <div
+                  onMouseDown={(e) => onResizeMouseDown(e, obj)}
+                  style={{
+                    position: "absolute",
+                    right: -6,
+                    bottom: -6,
+                    width: 12,
+                    height: 12,
+                    background: "#1971c2",
+                    cursor: "nwse-resize",
+                  }}
+                />
+              )}
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </div>
+  </main>
+);
+
 }
