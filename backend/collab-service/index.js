@@ -24,6 +24,22 @@ connectRabbit();
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
+  // Helper function for safe JSON parsing
+  function safeParseJSON(str, defaultValue = { objects: [] }) {
+    if (!str) return defaultValue;
+    try {
+      const parsed = JSON.parse(str);
+      // Ensure objects array exists
+      if (!parsed.objects || !Array.isArray(parsed.objects)) {
+        parsed.objects = [];
+      }
+      return parsed;
+    } catch (error) {
+      console.error("JSON parse error:", error);
+      return defaultValue;
+    }
+  }
+
   /* ---------------- JOIN ROOM ---------------- */
   socket.on("join-room", async (roomId) => {
     try {
@@ -36,7 +52,7 @@ io.on("connection", (socket) => {
       const state = await redisClient.get(key);
 
       if (state) {
-        socket.emit("room-state", JSON.parse(state));
+        socket.emit("room-state", safeParseJSON(state));
       }
 
       socket.to(roomId).emit("user-joined", {
@@ -54,16 +70,22 @@ io.on("connection", (socket) => {
   const state = await redisClient.get(key);
 
   if (state) {
-    socket.emit("room-state", JSON.parse(state));
+    socket.emit("room-state", safeParseJSON(state));
   }
   });
+  function pushHistory(state, entry) {
+  state.history = state.history || { undo: [], redo: [] };
+  state.history.undo.push(entry);
+  state.history.redo = []; // clear redo on new action
+}
+
 
   /* ---------------- OBJECT CREATE ---------------- */
   socket.on("object-create", async ({ roomId, object }) => {
     const key = `room:${roomId}:state`;
 
     let state = await redisClient.get(key);
-    state = state ? JSON.parse(state) : { objects: [] };
+    state = safeParseJSON(state);
 
     // ✅ backend is the authority for timestamps
     const enrichedObject = {
@@ -72,6 +94,14 @@ io.on("connection", (socket) => {
     };
 
     state.objects.push(enrichedObject);
+
+    pushHistory(state, {
+      type: "CREATE",
+      before: null,
+      after: enrichedObject,
+    });
+
+    // persist state including history
     await redisClient.set(key, JSON.stringify(state));
 
     publishEvent({
@@ -89,12 +119,20 @@ io.on("connection", (socket) => {
     const key = `room:${roomId}:state`;
 
     let state = await redisClient.get(key);
-    state = state ? JSON.parse(state) : { objects: [] };
+    state = safeParseJSON(state);
 
     const updatedObject = {
       ...object,
       updatedAt: Date.now(),
     };
+    const before = state.objects.find(o => o.id === updatedObject.id);
+
+pushHistory(state, {
+  type: "UPDATE",
+  before,
+  after: updatedObject,
+});
+
 
     state.objects = state.objects.map((o) =>
       o.id === updatedObject.id ? updatedObject : o
@@ -113,16 +151,26 @@ io.on("connection", (socket) => {
   });
 
   /* ---------------- OBJECT MOVE ---------------- */
+  // single-object move (kept for backward-compatibility)
   socket.on("object-move", async ({ roomId, object }) => {
     const key = `room:${roomId}:state`;
 
     let state = await redisClient.get(key);
-    state = state ? JSON.parse(state) : { objects: [] };
+    state = safeParseJSON(state);
 
+    const before = state.objects.find(o => o.id === object.id);
     const movedObject = {
       ...object,
       updatedAt: Date.now(),
     };
+
+    if (before) {
+      pushHistory(state, {
+        type: "MOVE",
+        before: [before],
+        after: { ids: [object.id], delta: { dx: movedObject.x - before.x, dy: movedObject.y - before.y } },
+      });
+    }
 
     state.objects = state.objects.map((o) =>
       o.id === movedObject.id ? movedObject : o
@@ -139,23 +187,75 @@ io.on("connection", (socket) => {
 
     socket.to(roomId).emit("object-moved", movedObject);
   });
+  socket.on("object-delete", async ({ roomId, objectId }) => {
+  const key = `room:${roomId}:state`;
+
+  let state = await redisClient.get(key);
+  state = safeParseJSON(state);
+
+  // find deleted object first
+  const deleted = state.objects.find((o) => o.id === objectId);
+
+  if (deleted) {
+    // remove object
+    state.objects = state.objects.filter((o) => o.id !== objectId);
+
+    pushHistory(state, {
+      type: "DELETE",
+      before: deleted,
+      after: null,
+    });
+  }
+
+
+
+
+  await redisClient.set(key, JSON.stringify(state));
+
+  // notify everyone
+  io.to(roomId).emit("object-deleted", { objectId });
+});
+
   /* ---------------- OBJECT-MOVE ---------------- */
 socket.on("objects-move", async ({ roomId, ids, delta }) => {
   const key = `room:${roomId}:state`;
 
   let state = await redisClient.get(key);
-  state = state ? JSON.parse(state) : { objects: [] };
+  state = safeParseJSON(state);
 
+  // capture before snapshots for undo
+  const beforeSnapshots = state.objects
+    .filter((o) => ids.includes(o.id))
+    .map((o) => {
+      if (o.type === "STROKE") return { id: o.id, points: o.points };
+      return { id: o.id, x: o.x, y: o.y };
+    });
+
+  // apply move
   state.objects = state.objects.map((o) => {
-    if (ids.includes(o.id)) {
+    if (!ids.includes(o.id)) return o;
+
+    if (o.type === "STROKE") {
       return {
         ...o,
-        x: o.x + delta.dx,
-        y: o.y + delta.dy,
+        points: (o.points || []).map((p) => ({ x: p.x + delta.dx, y: p.y + delta.dy })),
         updatedAt: Date.now(),
       };
     }
-    return o;
+
+    return {
+      ...o,
+      x: o.x + delta.dx,
+      y: o.y + delta.dy,
+      updatedAt: Date.now(),
+    };
+  });
+
+  // push history
+  pushHistory(state, {
+    type: "MOVE",
+    before: beforeSnapshots,
+    after: { ids, delta },
   });
 
   await redisClient.set(key, JSON.stringify(state));
@@ -168,14 +268,108 @@ socket.on("objects-move", async ({ roomId, ids, delta }) => {
   });
 
   socket.to(roomId).emit("objects-moved", {
-  ids,
-  delta,
-  source: socket.id,
-});
+    ids,
+    delta,
+    source: socket.id,
+  });
 
 });
 
 
+
+  /* ---------------- UNDO / REDO ---------------- */
+  socket.on("undo", async ({ roomId }) => {
+    const key = `room:${roomId}:state`;
+    const raw = await redisClient.get(key);
+    let state = safeParseJSON(raw, { objects: [], history: { undo: [], redo: [] } });
+
+    if (!state.history || !state.history.undo || state.history.undo.length === 0) return;
+
+    const action = state.history.undo.pop();
+    state.history.redo = state.history.redo || [];
+    state.history.redo.push(action);
+
+    if (action.type === "CREATE") {
+      // remove created object
+      state.objects = state.objects.filter((o) => o.id !== action.after.id);
+    }
+
+    if (action.type === "DELETE") {
+      // re-insert deleted object
+      state.objects.push(action.before);
+    }
+
+    if (action.type === "UPDATE") {
+      state.objects = state.objects.map((o) =>
+        o.id === action.before.id ? action.before : o
+      );
+    }
+
+    if (action.type === "MOVE") {
+      // restore previous positions from snapshots
+      state.objects = state.objects.map((o) => {
+        const b = action.before.find((b) => b.id === o.id);
+        if (!b) return o;
+        if (b.points) return { ...o, points: b.points };
+        return { ...o, x: b.x, y: b.y };
+      });
+    }
+
+    await redisClient.set(key, JSON.stringify(state));
+    io.to(roomId).emit("room-state", state);
+  });
+
+  socket.on("redo", async ({ roomId }) => {
+    const key = `room:${roomId}:state`;
+    const raw = await redisClient.get(key);
+    let state = safeParseJSON(raw, { objects: [], history: { undo: [], redo: [] } });
+
+    if (!state.history || !state.history.redo || state.history.redo.length === 0) return;
+
+    const action = state.history.redo.pop();
+    state.history.undo = state.history.undo || [];
+    state.history.undo.push(action);
+
+    if (action.type === "CREATE") {
+      // re-create
+      state.objects.push(action.after);
+    }
+
+    if (action.type === "DELETE") {
+      // re-delete
+      state.objects = state.objects.filter((o) => o.id !== action.before.id);
+    }
+
+    if (action.type === "UPDATE") {
+      state.objects = state.objects.map((o) =>
+        o.id === action.after.id ? action.after : o
+      );
+    }
+
+    if (action.type === "MOVE") {
+      // reapply delta
+      const { ids, delta } = action.after;
+      state.objects = state.objects.map((o) => {
+        if (!ids.includes(o.id)) return o;
+        if (o.type === "STROKE") {
+          return {
+            ...o,
+            points: (o.points || []).map((p) => ({ x: p.x + delta.dx, y: p.y + delta.dy })),
+            updatedAt: Date.now(),
+          };
+        }
+        return {
+          ...o,
+          x: o.x + delta.dx,
+          y: o.y + delta.dy,
+          updatedAt: Date.now(),
+        };
+      });
+    }
+
+    await redisClient.set(key, JSON.stringify(state));
+    io.to(roomId).emit("room-state", state);
+  });
 
   /* ---------------- DISCONNECT ---------------- */
   socket.on("disconnect", () => {

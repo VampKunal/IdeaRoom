@@ -36,6 +36,12 @@ export default function RoomPage({ params }) {
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState("");
 
+  // pan and zoom state
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
   /* ---------------- PARAMS ---------------- */
   useEffect(() => {
     async function unwrap() {
@@ -64,6 +70,10 @@ export default function RoomPage({ params }) {
     socket.on("room-state", (state) => {
       if (state?.objects) setObjects(state.objects);
     });
+    socket.on("object-deleted", ({ objectId }) => {
+  setObjects(prev => prev.filter(o => o.id !== objectId));
+});
+
 
     socket.on("object-created", (obj) => {
   setObjects((prev) => {
@@ -105,6 +115,8 @@ export default function RoomPage({ params }) {
       socket.off("object-updated");
       socket.off("object-moved");
       socket.off("objects-moved");
+      socket.off("object-deleted");
+      
     };
   }, [roomId]);
   
@@ -126,7 +138,7 @@ export default function RoomPage({ params }) {
 
   /* ---------------- DRAG ---------------- */
   function onMouseDown(e, obj) {
-    if (resizingId) return;
+    if (resizingId || tool === "pan") return;
 
     handleSelect(e, obj.id);
 
@@ -149,8 +161,9 @@ export default function RoomPage({ params }) {
   function onMouseMove(e) {
     if (!draggingId || !dragStartMouse || !dragOrigin) return;
 
-    const dx = e.clientX - dragStartMouse.x;
-    const dy = e.clientY - dragStartMouse.y;
+    // Account for zoom in drag calculations
+    const dx = (e.clientX - dragStartMouse.x) / zoom;
+    const dy = (e.clientY - dragStartMouse.y) / zoom;
 
     setDragDelta({ dx, dy });
 
@@ -183,7 +196,24 @@ export default function RoomPage({ params }) {
   }
   
   /* ---------------- RESIZE (RECT ONLY) ---------------- */
-  function onResizeMouseDown(e, obj) {
+  function getStrokeBBox(stroke) {
+  if (!stroke || !stroke.points || stroke.points.length === 0) return { minX: 0, minY: 0, width: 0, height: 0, center: { x: 0, y: 0 } };
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  stroke.points.forEach(p => {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  });
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const center = { x: minX + width / 2, y: minY + height / 2 };
+  return { minX, minY, width, height, center };
+}
+
+function onResizeMouseDown(e, obj) {
   e.stopPropagation();
   e.preventDefault();
 
@@ -193,6 +223,10 @@ export default function RoomPage({ params }) {
   // 🔑 store correct origin depending on shape
   if (obj.type === "SHAPE" && obj.data.shape === "circle") {
     setResizeOrigin({ radius: obj.data.radius });
+  } else if (obj.type === "STROKE") {
+    // store points + bbox + center
+    const bbox = getStrokeBBox(obj);
+    setResizeOrigin({ bbox, points: obj.points, center: bbox.center });
   } else {
     setResizeOrigin({
       width: obj.data.width || 120,
@@ -205,14 +239,15 @@ export default function RoomPage({ params }) {
   function onResizeMouseMove(e) {
   if (!resizingId || !resizeStartMouse || !resizeOrigin) return;
 
-  const dx = e.clientX - resizeStartMouse.x;
-  const dy = e.clientY - resizeStartMouse.y;
+  // Account for zoom in resize calculations
+  const dx = (e.clientX - resizeStartMouse.x) / zoom;
+  const dy = (e.clientY - resizeStartMouse.y) / zoom;
 
   setObjects((prev) =>
     prev.map((o) => {
       if (o.id !== resizingId) return o;
 
-      // 🔵 CIRCLE resize
+          // 🔵 CIRCLE resize
       if (o.type === "SHAPE" && o.data.shape === "circle") {
         const newRadius = Math.max(
           20,
@@ -225,6 +260,23 @@ export default function RoomPage({ params }) {
             ...o.data,
             radius: newRadius,
           },
+        };
+      }
+
+      // ✏️ STROKE resize (scale about center)
+      if (o.type === "STROKE") {
+        const { bbox, points, center } = resizeOrigin;
+        const maxDim = Math.max(bbox.width, bbox.height, 1);
+        const scale = Math.max(0.1, 1 + Math.max(dx, dy) / maxDim);
+
+        const newPoints = (points || []).map((p) => ({
+          x: center.x + (p.x - center.x) * scale,
+          y: center.y + (p.y - center.y) * scale,
+        }));
+
+        return {
+          ...o,
+          points: newPoints,
         };
       }
 
@@ -289,6 +341,16 @@ export default function RoomPage({ params }) {
     },
   });
 }
+  function selectStrokeAtPoint(x, y) {
+  // Apply inverse transform for pan/zoom
+  const worldX = (x - pan.x) / zoom;
+  const worldY = (y - pan.y) / zoom;
+  const hit = objects.find(
+    o => o.type === "STROKE" && isPointNearStroke({ x: worldX, y: worldY }, o)
+  );
+
+  if (hit) setSelectedIds([hit.id]);
+}
 
 
   function addNode() {
@@ -330,14 +392,21 @@ export default function RoomPage({ params }) {
       },
     });
   }
+  function distance(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
   function onDrawMouseDown(e) {
   if (tool !== "draw") return;
 
   e.preventDefault();
 
   const rect = e.currentTarget.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+  // Apply inverse transform for pan/zoom
+  const x = (e.clientX - rect.left - pan.x) / zoom;
+  const y = (e.clientY - rect.top - pan.y) / zoom;
 
   setIsDrawing(true);
   setCurrentStroke({
@@ -353,18 +422,28 @@ function onDrawMouseMove(e) {
   if (!isDrawing || tool !== "draw") return;
 
   const rect = e.currentTarget.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+  // Apply inverse transform for pan/zoom
+  const x = (e.clientX - rect.left - pan.x) / zoom;
+  const y = (e.clientY - rect.top - pan.y) / zoom;
 
-  setCurrentStroke((prev) =>
-    prev
-      ? {
-          ...prev,
-          points: [...prev.points, { x, y }],
-        }
-      : prev
-  );
+  setCurrentStroke((prev) => {
+    if (!prev) return prev;
+
+    const lastPoint = prev.points[prev.points.length - 1];
+    const nextPoint = { x, y };
+
+    // ✅ POINT THINNING
+    if (distance(lastPoint, nextPoint) < 6) {
+      return prev;
+    }
+
+    return {
+      ...prev,
+      points: [...prev.points, nextPoint],
+    };
+  });
 }
+
 
 function onDrawMouseUp() {
   if (!isDrawing || !currentStroke) return;
@@ -387,6 +466,132 @@ function onDrawMouseUp() {
   setIsDrawing(false);
   setCurrentStroke(null);
 }
+function isPointNearStroke(point, stroke, threshold = 6) {
+  for (let i = 0; i < stroke.points.length - 1; i++) {
+    const p1 = stroke.points[i];
+    const p2 = stroke.points[i + 1];
+
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const lenSq = dx * dx + dy * dy;
+
+    if (lenSq === 0) continue;
+
+    let t =
+      ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+
+    const px = p1.x + t * dx;
+    const py = p1.y + t * dy;
+
+    const dist = Math.hypot(point.x - px, point.y - py);
+    if (dist <= threshold) return true;
+  }
+  return false;
+}
+// Helper function to check if point is inside a rectangle
+function isPointInRect(point, obj) {
+  const width = obj.data?.width || 120;
+  const height = obj.data?.height || 40;
+  return (
+    point.x >= obj.x &&
+    point.x <= obj.x + width &&
+    point.y >= obj.y &&
+    point.y <= obj.y + height
+  );
+}
+
+// Helper function to check if point is inside a circle
+function isPointInCircle(point, obj) {
+  const radius = obj.data?.radius || 50;
+  const centerX = obj.x + radius;
+  const centerY = obj.y + radius;
+  const dx = point.x - centerX;
+  const dy = point.y - centerY;
+  return dx * dx + dy * dy <= radius * radius;
+}
+
+function eraseAtPoint(x, y) {
+  // Apply inverse transform for pan/zoom
+  const worldX = (x - pan.x) / zoom;
+  const worldY = (y - pan.y) / zoom;
+  const point = { x: worldX, y: worldY };
+
+  // Check all object types, prioritize strokes first (most common erase target)
+  let hit = objects.find(
+    o => o.type === "STROKE" && isPointNearStroke(point, o)
+  );
+
+  // If no stroke hit, check other object types
+  if (!hit) {
+    // Check TEXT
+    hit = objects.find(
+      o => o.type === "TEXT" && isPointInRect(point, o)
+    );
+  }
+
+  if (!hit) {
+    // Check NODE
+    hit = objects.find(
+      o => o.type === "NODE" && isPointInRect(point, o)
+    );
+  }
+
+  if (!hit) {
+    // Check SHAPE (rect or circle)
+    hit = objects.find(o => {
+      if (o.type !== "SHAPE") return false;
+      if (o.data?.shape === "circle") {
+        return isPointInCircle(point, o);
+      } else {
+        return isPointInRect(point, o);
+      }
+    });
+  }
+
+  if (!hit) {
+    // Check EDGE (approximate by checking if point is near the line)
+    hit = objects.find(o => {
+      if (o.type !== "EDGE") return false;
+      const from = objects.find(n => n.type === "NODE" && n.id === o.data?.from);
+      const to = objects.find(n => n.type === "NODE" && n.id === o.data?.to);
+      if (!from || !to) return false;
+      
+      const fromX = from.x + (from.data?.width || 120) / 2;
+      const fromY = from.y + (from.data?.height || 40) / 2;
+      const toX = to.x + (to.data?.width || 120) / 2;
+      const toY = to.y + (to.data?.height || 40) / 2;
+      
+      // Distance from point to line segment
+      const A = point.x - fromX;
+      const B = point.y - fromY;
+      const C = toX - fromX;
+      const D = toY - fromY;
+      const dot = A * C + B * D;
+      const lenSq = C * C + D * D;
+      let param = lenSq !== 0 ? dot / lenSq : -1;
+      param = Math.max(0, Math.min(1, param));
+      
+      const xx = fromX + param * C;
+      const yy = fromY + param * D;
+      const dx = point.x - xx;
+      const dy = point.y - yy;
+      return Math.sqrt(dx * dx + dy * dy) <= 6; // threshold
+    });
+  }
+
+  if (!hit) return;
+
+  // optimistic UI
+  setObjects(prev => prev.filter(o => o.id !== hit.id));
+
+  // sync erase
+  connectSocket().emit("object-delete", {
+    roomId,
+    objectId: hit.id,
+  });
+}
+
 
 // Smoothing helper: convert points → quadratic Bézier path (no thinning)
 function pointsToQuadraticPath(points) {
@@ -481,18 +686,93 @@ function pointsToQuadraticPath(points) {
     >
         ✏️ Draw
       </button>
+      <button
+  onClick={() =>
+    setTool(prev => (prev === "erase" ? "select" : "erase"))
+  }
+  style={{
+    background: tool === "erase" ? "#e03131" : "#f1f3f5",
+    color: tool === "erase" ? "#fff" : "#000",
+  }}
+>
+  🧽 Erase
+</button>
+  <button onClick={() => connectSocket().emit("undo", { roomId })}>
+  ⬅️ Undo
+</button>
+    <button onClick={() => connectSocket().emit("redo", { roomId })}>
+  ➡️ Redo
+</button>
+<button
+  onClick={() => setTool(prev => (prev === "pan" ? "select" : "pan"))}
+  style={{
+    background: tool === "pan" ? "#1971c2" : "#f1f3f5",
+    color: tool === "pan" ? "#fff" : "#000",
+  }}
+>
+  ✋ Pan
+</button>
+<button onClick={() => setZoom(1)}>🔍 Reset Zoom</button>
+<span style={{ marginLeft: 10 }}>Zoom: {(zoom * 100).toFixed(0)}%</span>
+
 
 
     <div
   onMouseDown={(e) => {
-    if (tool === "draw") onDrawMouseDown(e);
-    else setSelectedIds([]);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (tool === "pan") {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    } else if (tool === "draw") {
+      onDrawMouseDown(e);
+    } else if (tool === "select") {
+      selectStrokeAtPoint(x, y);
+    } else if (tool === "erase") {
+      eraseAtPoint(x, y);
+    } else {
+      setSelectedIds([]);
+    }
   }}
+
   onMouseMove={(e) => {
-    if (tool === "draw") onDrawMouseMove(e);
+    if (tool === "pan" && isPanning) {
+      setPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
+      });
+    } else if (tool === "draw") {
+      onDrawMouseMove(e);
+    }
   }}
+
   onMouseUp={() => {
-    if (tool === "draw") onDrawMouseUp();
+    if (tool === "pan") {
+      setIsPanning(false);
+    } else if (tool === "draw") {
+      onDrawMouseUp();
+    }
+  }}
+
+  onWheel={(e) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
+    
+    // Zoom towards mouse position
+    const zoomChange = newZoom / zoom;
+    setPan({
+      x: mouseX - (mouseX - pan.x) * zoomChange,
+      y: mouseY - (mouseY - pan.y) * zoomChange,
+    });
+    setZoom(newZoom);
   }}
 
   
@@ -502,7 +782,8 @@ function pointsToQuadraticPath(points) {
     height: "70vh",
     border: "1px solid #ccc",
     position: "relative",
-    cursor: tool === "draw" ? "crosshair" : "default",
+    cursor: tool === "draw" ? "crosshair" : tool === "pan" ? (isPanning ? "grabbing" : "grab") : tool === "erase" ? "crosshair" : "default",
+    overflow: "hidden",
   }}
 >
 
@@ -514,6 +795,8 @@ function pointsToQuadraticPath(points) {
           width: "100%",
           height: "100%",
           pointerEvents: "none",
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: "0 0",
         }}
         
       >
@@ -521,10 +804,15 @@ function pointsToQuadraticPath(points) {
   <path
     d={pointsToQuadraticPath(currentStroke.points)}
     stroke={currentStroke.color}
-    strokeWidth={currentStroke.width}
+    strokeWidth={
+      selectedIds.includes(currentStroke.id)
+        ? (currentStroke.width || 2) + 2
+        : currentStroke.width || 2
+    }
     fill="none"
     strokeLinecap="round"
     strokeLinejoin="round"
+    style={{ pointerEvents: "none" }}
   />
 )}
       {/* PERSISTED STROKES */}
@@ -535,10 +823,19 @@ function pointsToQuadraticPath(points) {
       key={stroke.id}
       d={pointsToQuadraticPath(stroke.points)}
       stroke={stroke.color || "#ffffff"}
-      strokeWidth={stroke.width || 2}
+      strokeWidth={
+        selectedIds.includes(stroke.id)
+          ? (stroke.width || 2) + 2
+          : stroke.width || 2
+      }
       fill="none"
       strokeLinecap="round"
       strokeLinejoin="round"
+      style={{ pointerEvents: "stroke" }}
+      onMouseDown={(e) => {
+        // only start selection/drag on select tool — let draw/erase pass through
+        if (tool === "select") onMouseDown(e, stroke);
+      }}
     />
   ))}
 
@@ -557,13 +854,24 @@ function pointsToQuadraticPath(points) {
                 x2={to.x + (to.data.width || 120) / 2}
                 y2={to.y + (to.data.height || 40) / 2}
                 stroke="#495057"
-                strokeWidth="2"
+                strokeWidth={selectedIds.includes(edge.id) ? 3 : 1}
+
               />
             );
           })}
       </svg>
 
       {/* OBJECTS */}
+      <div
+        style={{
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: "0 0",
+          pointerEvents: tool === "pan" ? "none" : "auto",
+        }}
+      >
       {objects.map((obj) => {
         const selected = selectedIds.includes(obj.id);
 
@@ -753,8 +1061,34 @@ if (obj.type === "TEXT") {
           );
         }
 
+        /* ---------- STROKE (handles only, path rendered in SVG) ---------- */
+        if (obj.type === "STROKE") {
+          // compute bbox for handle placement
+          const bbox = getStrokeBBox(obj);
+
+          return (
+            <div key={obj.id}>
+              {selected && (
+                <div
+                  onMouseDownCapture={(e) => onResizeMouseDown(e, obj)}
+                  style={{
+                    position: "absolute",
+                    left: bbox.minX + bbox.width - 6,
+                    top: bbox.minY + bbox.height - 6,
+                    width: 12,
+                    height: 12,
+                    background: "#1971c2",
+                    cursor: "nwse-resize",
+                  }}
+                />
+              )}
+            </div>
+          );
+        }
+
         return null;
       })}
+      </div>
     </div>
   </main>
 );
