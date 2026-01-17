@@ -64,20 +64,32 @@ io.on("connection", (socket) => {
       socket.emit("error", "Invalid room ID");
     }
   });
+
+  /* ---------------- CURSOR MOVE ---------------- */
+  socket.on("cursor-move", ({ roomId, position, userId, userName }) => {
+    // Ephemeral: don't store in redis
+    socket.to(roomId).emit("cursor-moved", {
+      socketId: socket.id,
+      position,
+      userId,
+      userName, // optional if we want names
+      color: "#" + Math.floor(Math.random() * 16777215).toString(16) // simple random color logic or pass from front
+    });
+  });
   /* ---------------- REQUEST-ROOM-STATE---------------- */
   socket.on("request-room-state", async (roomId) => {
-  const key = `room:${roomId}:state`;
-  const state = await redisClient.get(key);
+    const key = `room:${roomId}:state`;
+    const state = await redisClient.get(key);
 
-  if (state) {
-    socket.emit("room-state", safeParseJSON(state));
-  }
+    if (state) {
+      socket.emit("room-state", safeParseJSON(state));
+    }
   });
   function pushHistory(state, entry) {
-  state.history = state.history || { undo: [], redo: [] };
-  state.history.undo.push(entry);
-  state.history.redo = []; // clear redo on new action
-}
+    state.history = state.history || { undo: [], redo: [] };
+    state.history.undo.push(entry);
+    state.history.redo = []; // clear redo on new action
+  }
 
 
   /* ---------------- OBJECT CREATE ---------------- */
@@ -127,11 +139,11 @@ io.on("connection", (socket) => {
     };
     const before = state.objects.find(o => o.id === updatedObject.id);
 
-pushHistory(state, {
-  type: "UPDATE",
-  before,
-  after: updatedObject,
-});
+    pushHistory(state, {
+      type: "UPDATE",
+      before,
+      after: updatedObject,
+    });
 
 
     state.objects = state.objects.map((o) =>
@@ -148,6 +160,36 @@ pushHistory(state, {
     });
 
     socket.to(roomId).emit("object-updated", updatedObject);
+  });
+
+  /* ---------------- OBJECT REORDER ---------------- */
+  socket.on("object-reorder", async ({ roomId, objectId, action }) => {
+    const key = `room:${roomId}:state`;
+    let state = await redisClient.get(key);
+    state = safeParseJSON(state);
+
+    const index = state.objects.findIndex(o => o.id === objectId);
+    if (index === -1) return;
+
+    const object = state.objects[index];
+
+    // Remove from current pos
+    state.objects.splice(index, 1);
+
+    if (action === "bring-to-front") {
+      state.objects.push(object);
+    } else if (action === "send-to-back") {
+      state.objects.unshift(object);
+    }
+
+    pushHistory(state, {
+      type: "REORDER",
+      before: { index, id: objectId },
+      after: { action, id: objectId } // Simplified history for now implies revert = inverse
+    });
+
+    await redisClient.set(key, JSON.stringify(state));
+    io.to(roomId).emit("room-state", state); // Full refresh is easiest for reorder
   });
 
   /* ---------------- OBJECT MOVE ---------------- */
@@ -188,92 +230,92 @@ pushHistory(state, {
     socket.to(roomId).emit("object-moved", movedObject);
   });
   socket.on("object-delete", async ({ roomId, objectId }) => {
-  const key = `room:${roomId}:state`;
+    const key = `room:${roomId}:state`;
 
-  let state = await redisClient.get(key);
-  state = safeParseJSON(state);
+    let state = await redisClient.get(key);
+    state = safeParseJSON(state);
 
-  // find deleted object first
-  const deleted = state.objects.find((o) => o.id === objectId);
+    // find deleted object first
+    const deleted = state.objects.find((o) => o.id === objectId);
 
-  if (deleted) {
-    // remove object
-    state.objects = state.objects.filter((o) => o.id !== objectId);
+    if (deleted) {
+      // remove object
+      state.objects = state.objects.filter((o) => o.id !== objectId);
 
-    pushHistory(state, {
-      type: "DELETE",
-      before: deleted,
-      after: null,
-    });
-  }
-
-
-
-
-  await redisClient.set(key, JSON.stringify(state));
-
-  // notify everyone
-  io.to(roomId).emit("object-deleted", { objectId });
-});
-
-  /* ---------------- OBJECT-MOVE ---------------- */
-socket.on("objects-move", async ({ roomId, ids, delta }) => {
-  const key = `room:${roomId}:state`;
-
-  let state = await redisClient.get(key);
-  state = safeParseJSON(state);
-
-  // capture before snapshots for undo
-  const beforeSnapshots = state.objects
-    .filter((o) => ids.includes(o.id))
-    .map((o) => {
-      if (o.type === "STROKE") return { id: o.id, points: o.points };
-      return { id: o.id, x: o.x, y: o.y };
-    });
-
-  // apply move
-  state.objects = state.objects.map((o) => {
-    if (!ids.includes(o.id)) return o;
-
-    if (o.type === "STROKE") {
-      return {
-        ...o,
-        points: (o.points || []).map((p) => ({ x: p.x + delta.dx, y: p.y + delta.dy })),
-        updatedAt: Date.now(),
-      };
+      pushHistory(state, {
+        type: "DELETE",
+        before: deleted,
+        after: null,
+      });
     }
 
-    return {
-      ...o,
-      x: o.x + delta.dx,
-      y: o.y + delta.dy,
-      updatedAt: Date.now(),
-    };
+
+
+
+    await redisClient.set(key, JSON.stringify(state));
+
+    // notify everyone
+    io.to(roomId).emit("object-deleted", { objectId });
   });
 
-  // push history
-  pushHistory(state, {
-    type: "MOVE",
-    before: beforeSnapshots,
-    after: { ids, delta },
+  /* ---------------- OBJECT-MOVE ---------------- */
+  socket.on("objects-move", async ({ roomId, ids, delta }) => {
+    const key = `room:${roomId}:state`;
+
+    let state = await redisClient.get(key);
+    state = safeParseJSON(state);
+
+    // capture before snapshots for undo
+    const beforeSnapshots = state.objects
+      .filter((o) => ids.includes(o.id))
+      .map((o) => {
+        if (o.type === "STROKE") return { id: o.id, points: o.points };
+        return { id: o.id, x: o.x, y: o.y };
+      });
+
+    // apply move
+    state.objects = state.objects.map((o) => {
+      if (!ids.includes(o.id)) return o;
+
+      if (o.type === "STROKE") {
+        return {
+          ...o,
+          points: (o.points || []).map((p) => ({ x: p.x + delta.dx, y: p.y + delta.dy })),
+          updatedAt: Date.now(),
+        };
+      }
+
+      return {
+        ...o,
+        x: o.x + delta.dx,
+        y: o.y + delta.dy,
+        updatedAt: Date.now(),
+      };
+    });
+
+    // push history
+    pushHistory(state, {
+      type: "MOVE",
+      before: beforeSnapshots,
+      after: { ids, delta },
+    });
+
+    await redisClient.set(key, JSON.stringify(state));
+
+    publishEvent({
+      roomId,
+      type: "OBJECTS_MOVED",
+      payload: { ids, delta },
+      timestamp: Date.now(),
+    });
+
+    socket.to(roomId).emit("objects-moved", {
+      ids,
+      delta,
+      source: socket.id,
+    });
+
   });
-
-  await redisClient.set(key, JSON.stringify(state));
-
-  publishEvent({
-    roomId,
-    type: "OBJECTS_MOVED",
-    payload: { ids, delta },
-    timestamp: Date.now(),
-  });
-
-  socket.to(roomId).emit("objects-moved", {
-    ids,
-    delta,
-    source: socket.id,
-  });
-
-});
 
 
 
@@ -313,6 +355,14 @@ socket.on("objects-move", async ({ roomId, ids, delta }) => {
         if (b.points) return { ...o, points: b.points };
         return { ...o, x: b.x, y: b.y };
       });
+    }
+
+    if (action.type === "REORDER") {
+      const idxToRemove = state.objects.findIndex(o => o.id === action.before.id);
+      if (idxToRemove !== -1) {
+        const [obj] = state.objects.splice(idxToRemove, 1);
+        state.objects.splice(action.before.index, 0, obj);
+      }
     }
 
     await redisClient.set(key, JSON.stringify(state));
@@ -365,6 +415,18 @@ socket.on("objects-move", async ({ roomId, ids, delta }) => {
           updatedAt: Date.now(),
         };
       });
+    }
+
+    if (action.type === "REORDER") {
+      const idx = state.objects.findIndex(o => o.id === action.after.id);
+      if (idx !== -1) {
+        const [obj] = state.objects.splice(idx, 1);
+        if (action.after.action === "bring-to-front") {
+          state.objects.push(obj);
+        } else {
+          state.objects.unshift(obj);
+        }
+      }
     }
 
     await redisClient.set(key, JSON.stringify(state));
