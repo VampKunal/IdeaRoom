@@ -11,6 +11,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: { origin: "*" },
+  maxHttpBufferSize: 1e7, // 10 MB
 });
 
 const PORT = 4000;
@@ -59,9 +60,30 @@ io.on("connection", (socket) => {
         socketId: socket.id,
       });
 
+      // Track active users
+      const userKey = `room:${roomId}:users`;
+      await redisClient.sAdd(userKey, socket.id);
+      const activeUsers = await redisClient.sMembers(userKey);
+      console.log(`[JOIN] ${socket.id} joined ${roomId}. Users: ${activeUsers.length}`);
+      io.to(roomId).emit("room-users", activeUsers);
+
+      // Handle disconnect to clean up
+      socket.on("disconnect", async () => {
+        try {
+          await redisClient.sRem(userKey, socket.id);
+          const remaining = await redisClient.sMembers(userKey);
+          console.log(`[LEAVE] ${socket.id} left ${roomId}. Remaining: ${remaining.length}`);
+          io.to(roomId).emit("room-users", remaining);
+        } catch (e) {
+          console.error("Disconnect processing error:", e);
+        }
+      });
+
+
       console.log(`Socket ${socket.id} joined room ${roomId}`);
-    } catch {
-      socket.emit("error", "Invalid room ID");
+    } catch (err) {
+      console.error("Join room error:", err);
+      socket.emit("error", "Invalid room ID or Server Error");
     }
   });
 
@@ -94,6 +116,7 @@ io.on("connection", (socket) => {
 
   /* ---------------- OBJECT CREATE ---------------- */
   socket.on("object-create", async ({ roomId, object }) => {
+    console.log(`[CREATE] Obj ${object.id} (${object.type}) in ${roomId}. Size: ${JSON.stringify(object).length}`);
     const key = `room:${roomId}:state`;
 
     let state = await redisClient.get(key);
@@ -316,6 +339,55 @@ io.on("connection", (socket) => {
     });
 
   });
+
+  /* ---------------- OBJECT REORDER (Z-INDEX) ---------------- */
+  socket.on("object-reorder", async ({ roomId, objectIds, action }) => {
+    // action: 'front' | 'back' | 'forward' | 'backward'
+    const key = `room:${roomId}:state`;
+    let state = await redisClient.get(key);
+    state = safeParseJSON(state);
+
+    if (!state.objects || state.objects.length === 0) return;
+
+    const targets = new Set(objectIds);
+    const moving = state.objects.filter(o => targets.has(o.id));
+    const others = state.objects.filter(o => !targets.has(o.id));
+
+    let newOrder = [];
+
+    if (action === "front") {
+      newOrder = [...others, ...moving];
+    } else if (action === "back") {
+      newOrder = [...moving, ...others];
+    } else if (action === "forward") {
+      let list = [...state.objects];
+      for (let i = list.length - 2; i >= 0; i--) {
+        if (targets.has(list[i].id) && !targets.has(list[i + 1].id)) {
+          const temp = list[i];
+          list[i] = list[i + 1];
+          list[i + 1] = temp;
+        }
+      }
+      newOrder = list;
+    } else if (action === "backward") {
+      let list = [...state.objects];
+      for (let i = 1; i < list.length; i++) {
+        if (targets.has(list[i].id) && !targets.has(list[i - 1].id)) {
+          const temp = list[i];
+          list[i] = list[i - 1];
+          list[i - 1] = temp;
+        }
+      }
+      newOrder = list;
+    } else {
+      newOrder = state.objects;
+    }
+
+    state.objects = newOrder;
+    await redisClient.set(key, JSON.stringify(state));
+    io.to(roomId).emit("room-state", state);
+  });
+
 
 
 

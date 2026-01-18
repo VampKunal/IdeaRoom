@@ -3,11 +3,13 @@
 import React, { useEffect, useState } from "react";
 import { getRoom } from "../../lib/api";
 import { connectSocket } from "../../lib/socket";
+import html2canvas from "html2canvas";
 
 export default function RoomPage({ params }) {
   const [roomId, setRoomId] = useState(null);
   const [room, setRoom] = useState(null);
   const [objects, setObjects] = useState([]);
+  const [activeUsers, setActiveUsers] = useState([]);
 
   // selection
   const [selectedIds, setSelectedIds] = useState([]);
@@ -131,6 +133,10 @@ export default function RoomPage({ params }) {
       }));
     });
 
+    socket.on("room-users", (users) => {
+      setActiveUsers(users || []);
+    });
+
     return () => {
       socket.off("connect");
       socket.off("room-state");
@@ -140,6 +146,7 @@ export default function RoomPage({ params }) {
       socket.off("objects-moved");
       socket.off("object-deleted");
       socket.off("cursor-moved");
+      socket.off("room-users");
     };
   }, [roomId]);
 
@@ -175,7 +182,8 @@ export default function RoomPage({ params }) {
     const origin = {};
     ids.forEach((id) => {
       const o = objects.find((x) => x.id === id);
-      if (o) origin[id] = { x: o.x, y: o.y };
+      // Store initial state (x,y for shapes/text, points for strokes)
+      if (o) origin[id] = { x: o.x, y: o.y, points: o.points };
     });
 
     setDragOrigin(origin);
@@ -191,15 +199,26 @@ export default function RoomPage({ params }) {
     setDragDelta({ dx, dy });
 
     setObjects((prev) =>
-      prev.map((o) =>
-        dragOrigin[o.id]
-          ? {
+      prev.map((o) => {
+        const initial = dragOrigin[o.id];
+        if (!initial) return o;
+
+        if (o.type === "STROKE") {
+          return {
             ...o,
-            x: dragOrigin[o.id].x + dx,
-            y: dragOrigin[o.id].y + dy,
-          }
-          : o
-      )
+            points: initial.points.map(p => ({
+              x: p.x + dx,
+              y: p.y + dy
+            }))
+          };
+        }
+
+        return {
+          ...o,
+          x: initial.x + dx,
+          y: initial.y + dy,
+        };
+      })
     );
   }
 
@@ -865,9 +884,75 @@ export default function RoomPage({ params }) {
       <button onClick={() => setZoom(1)}>🔍 Reset Zoom</button>
       <span style={{ marginLeft: 10 }}>Zoom: {(zoom * 100).toFixed(0)}%</span>
 
+      {/* EXPORT / IMPORT UI */}
+      <div style={{ display: "inline-block", marginLeft: 20, borderLeft: "1px solid #ccc", paddingLeft: 20 }}>
+        <label style={{ cursor: "pointer", marginRight: 10, fontSize: "20px" }} title="Upload Image">
+          🖼️
+          <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+              const img = new Image();
+              img.onload = () => {
+                const maxDim = 400;
+                let w = img.width;
+                let h = img.height;
+                if (w > maxDim || h > maxDim) {
+                  const ratio = w / h;
+                  if (w > h) { w = maxDim; h = maxDim / ratio; }
+                  else { h = maxDim; w = maxDim * ratio; }
+                }
+
+                connectSocket().emit("object-create", {
+                  roomId,
+                  object: {
+                    id: crypto.randomUUID(),
+                    type: "IMAGE",
+                    x: 100 + Math.abs(pan.x / zoom),
+                    y: 100 + Math.abs(pan.y / zoom),
+                    data: { src: evt.target.result, width: w, height: h }
+                  }
+                });
+              };
+              img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+          }} />
+        </label>
+        <button onClick={() => {
+          if (typeof window === "undefined") return;
+          const element = document.getElementById("canvas-container");
+          if (!element) return;
+
+          // Hide UI for screenshot if needed, or just capture. 
+          // html2canvas captures what's visible. 
+          // Ideally we capture just the INNER content div but that requires unwrapping pan/zoom.
+          // For WYSIWYG, we capture the container.
+
+          html2canvas(element).then(canvas => {
+            const link = document.createElement('a');
+            link.download = (room.title || 'whiteboard') + '.png';
+            link.href = canvas.toDataURL();
+            link.click();
+          });
+        }} title="Export PNG">📷</button>
+
+        {/* LAYERING UI */}
+        {selectedIds.length > 0 && (
+          <div style={{ display: "inline-block", marginLeft: 20, borderLeft: "1px solid #ccc", paddingLeft: 20 }}>
+            <button title="Bring to Front" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "front" })}>⏫</button>
+            <button title="Identify Up" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "forward" })}>🔼</button>
+            <button title="Identify Down" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "backward" })}>🔽</button>
+            <button title="Send to Back" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "back" })}>⏬</button>
+          </div>
+        )}
+      </div>
+
 
 
       <div
+        id="canvas-container"
         onMouseDown={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const x = e.clientX - rect.left;
@@ -1287,6 +1372,33 @@ export default function RoomPage({ params }) {
               );
             }
 
+            /* ---------- IMAGE ---------- */
+            if (obj.type === "IMAGE") {
+              return (
+                <div
+                  key={obj.id}
+                  onMouseDown={(e) => onMouseDown(e, obj)}
+                  style={{
+                    position: "absolute",
+                    left: obj.x,
+                    top: obj.y,
+                    width: obj.data.width,
+                    height: obj.data.height,
+                    border: selected ? "2px solid #1971c2" : "none",
+                    cursor: "grab",
+                    pointerEvents: "auto",
+                  }}
+                >
+                  <img
+                    src={obj.data.src}
+                    alt="Uploaded"
+                    style={{ width: "100%", height: "100%", pointerEvents: "none", display: "block" }}
+                    draggable={false}
+                  />
+                </div>
+              );
+            }
+
             return null;
           })}
 
@@ -1326,6 +1438,33 @@ export default function RoomPage({ params }) {
             );
           })()}
           {/* CURSORS LAYER */}
+          {/* USER LIST (activeUsers) */}
+          <div style={{
+            position: "fixed",
+            top: 20,
+            right: 20,
+            background: "white",
+            padding: "8px 12px",
+            borderRadius: 8,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            zIndex: 100000,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 200,
+            overflowY: "auto"
+          }}>
+            <div style={{ fontWeight: "bold", fontSize: 12, marginBottom: 4 }}>
+              Active Users ({activeUsers.length})
+            </div>
+            {activeUsers.map(uid => (
+              <div key={uid} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#1971c2" }} />
+                {uid === connectSocket().id ? "You" : `User ${uid.slice(0, 4)}`}
+              </div>
+            ))}
+          </div>
+
           {Object.entries(otherCursors).map(([id, cursor]) => (
             <div key={id} style={{
               position: "absolute",
@@ -1333,24 +1472,43 @@ export default function RoomPage({ params }) {
               top: cursor.y,
               pointerEvents: "none",
               zIndex: 99999,
-              transition: "left 0.1s linear, top 0.1s linear"
+              transition: "transform 0.1s linear",
+              // Using transform for performance instead of left/top transition if possible, 
+              // but left/top is bound to state. Transition key prop is fine.
             }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5.65376 12.3673H5.46026L5.31717 12.4976L0.500002 16.8829L0.500002 1.19177L15.6841 8.78368L7.69614 10.999L5.65376 12.3673Z" fill={cursor.color || "#09f"} stroke="white" />
+              {/* Cursor Icon (SVG) */}
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                style={{ filter: "drop-shadow(0px 2px 4px rgba(0,0,0,0.2))" }}
+              >
+                <path d="M5.65376 12.3673H5.46026L5.31717 12.4976L0.500002 16.8829L0.500002 1.19177L15.6841 8.78368L7.69614 10.999L5.65376 12.3673Z"
+                  fill={cursor.color || "#09f"}
+                  stroke="white"
+                  strokeWidth="1.5"
+                />
               </svg>
-              <span style={{
+
+              {/* User Label */}
+              <div style={{
                 position: "absolute",
-                left: 12,
-                top: 12,
+                left: 16,
+                top: 14,
                 background: cursor.color || "#09f",
                 color: "white",
-                padding: "2px 4px",
-                borderRadius: 4,
-                fontSize: 10,
-                whiteSpace: "nowrap"
+                padding: "2px 8px",
+                borderRadius: "12px",
+                fontSize: "11px",
+                fontWeight: "600",
+                whiteSpace: "nowrap",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
+                pointerEvents: "none"
               }}>
-                User
-              </span>
+                {cursor.userId || "User"}
+              </div>
             </div>
           ))}
 
@@ -1369,8 +1527,159 @@ export default function RoomPage({ params }) {
             }} />
           )}
         </div>
+
+        {/* MINIMAP */}
+        <Minimap objects={objects} viewport={{ x: -pan.x, y: -pan.y, width: typeof window !== 'undefined' ? window.innerWidth : 800, height: typeof window !== 'undefined' ? window.innerHeight : 600, zoom }} />
       </div >
     </main >
   );
-
 }
+
+function Minimap({ objects, viewport }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted || typeof window === 'undefined') return null;
+
+  const MAP_SIZE = 150;
+
+  // Filter valid objects to prevent NaN
+  const validObjects = objects.filter(o =>
+    typeof o.x === 'number' && !isNaN(o.x) &&
+    typeof o.y === 'number' && !isNaN(o.y)
+  );
+
+  // Bounds of all objects
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  if (validObjects.length > 0) {
+    validObjects.forEach(o => {
+      const x = o.x;
+      const y = o.y;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+
+      // Attempt to determine width/height for bounding box
+      let w = 0, h = 0;
+      if (o.type === 'SHAPE' && o.data.shape === 'circle') {
+        w = h = (o.data.radius || 50) * 2;
+      } else if (o.type === 'STROKE') {
+        // crude approximation if points not analyzed here, 
+        // but we just need max bounds. 
+        // Usually stroke.x is 0? No, stroke has points.
+        // Wait, for STROKE, o.x might not represent the whole shape if points go typically elsewhere.
+        // But our data model puts x/y on stroke too (or we ignored it).
+        // If o.type is STROKE, o.x/o.y might be meaningless or 0 if we aren't updating them.
+        // Let's rely on points if available?
+        // For simplicity in minimap, just using o.x is risky if o.x isn't maintained.
+        // However, we recently added drag logic that updates o.x!
+        // So o.x IS valid.
+        w = 100; h = 100;
+      } else {
+        w = o.data?.width || 100;
+        h = o.data?.height || 100;
+      }
+
+      maxX = Math.max(maxX, x + w);
+      maxY = Math.max(maxY, y + h);
+    });
+  } else {
+    minX = 0; minY = 0; maxX = 1000; maxY = 1000;
+  }
+
+  // Padding
+  const PADDING = 500;
+  minX -= PADDING;
+  minY -= PADDING;
+  maxX += PADDING;
+  maxY += PADDING;
+
+  const worldW = maxX - minX;
+  const worldH = maxY - minY;
+
+  // Safe scale
+  const scale = Math.min(MAP_SIZE / (worldW || 1), MAP_SIZE / (worldH || 1));
+
+  const mapW = worldW * scale;
+  const mapH = worldH * scale;
+
+  // Viewport
+  // viewport.x passed as -pan.x. 
+  // Screen TopLeft in World = -pan.x / zoom
+  const vpWorldX = (viewport.x / (viewport.zoom || 1));
+  const vpWorldY = (viewport.y / (viewport.zoom || 1));
+  const vpWorldW = viewport.width / (viewport.zoom || 1);
+  const vpWorldH = viewport.height / (viewport.zoom || 1);
+
+  const vpMapX = (vpWorldX - minX) * scale;
+  const vpMapY = (vpWorldY - minY) * scale;
+  const vpMapW = vpWorldW * scale;
+  const vpMapH = vpWorldH * scale;
+
+  return (
+    <div style={{
+      position: "fixed",
+      bottom: 20,
+      right: 20,
+      width: mapW,
+      height: mapH,
+      background: "rgba(255,255,255,0.9)",
+      border: "1px solid #ccc",
+      borderRadius: 4,
+      boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+      zIndex: 100000,
+      pointerEvents: "none"
+    }}>
+      {validObjects.map(o => {
+        const ox = (o.x - minX) * scale;
+        const oy = (o.y - minY) * scale;
+
+        let ow = 10 * scale;
+        let oh = 10 * scale;
+
+        // Size estimation
+        if (o.type === 'SHAPE' && o.data?.shape === 'circle') {
+          ow = (o.data.radius || 50) * 2 * scale;
+          oh = ow;
+        } else if (o.type === 'STROKE') {
+          // just a dot/small box for strokes in minimap
+          ow = Math.max(2, 5 * scale);
+          oh = Math.max(2, 5 * scale);
+        } else {
+          if (o.data?.width) {
+            ow = o.data.width * scale;
+            oh = o.data.height * scale;
+          }
+        }
+
+        // Safety check for NaN in CSS
+        if (isNaN(ox) || isNaN(oy) || isNaN(ow) || isNaN(oh)) return null;
+
+        return (
+          <div key={o.id} style={{
+            position: "absolute",
+            left: ox,
+            top: oy,
+            width: Math.max(2, ow),
+            height: Math.max(2, oh),
+            background: o.type === "STROKE" ? (o.color || "#000") : (o.data?.color || "#888"),
+            borderRadius: o.data?.shape === "circle" ? "50%" : 1,
+            opacity: 0.6
+          }} />
+        )
+      })}
+
+      {/* Viewport Rect */}
+      <div style={{
+        position: "absolute",
+        left: isNaN(vpMapX) ? 0 : vpMapX,
+        top: isNaN(vpMapY) ? 0 : vpMapY,
+        width: isNaN(vpMapW) ? 0 : vpMapW,
+        height: isNaN(vpMapH) ? 0 : vpMapH,
+        border: "2px solid #1971c2",
+        background: "rgba(25, 113, 194, 0.1)"
+      }} />
+    </div>
+  );
+}
+
