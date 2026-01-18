@@ -74,6 +74,7 @@ io.on("connection", (socket) => {
           const remaining = await redisClient.sMembers(userKey);
           console.log(`[LEAVE] ${socket.id} left ${roomId}. Remaining: ${remaining.length}`);
           io.to(roomId).emit("room-users", remaining);
+          io.to(roomId).emit("user-left", { socketId: socket.id });
         } catch (e) {
           console.error("Disconnect processing error:", e);
         }
@@ -89,7 +90,7 @@ io.on("connection", (socket) => {
 
   /* ---------------- CURSOR MOVE ---------------- */
   socket.on("cursor-move", ({ roomId, position, userId, userName }) => {
-    // Ephemeral: don't store in redis
+    // Broadcast cursor
     socket.to(roomId).emit("cursor-moved", {
       socketId: socket.id,
       position,
@@ -97,6 +98,28 @@ io.on("connection", (socket) => {
       userName, // optional if we want names
       color: "#" + Math.floor(Math.random() * 16777215).toString(16) // simple random color logic or pass from front
     });
+  });
+
+  /* ---------------- BACKGROUND UPDATE ---------------- */
+  socket.on("room-bg-update", async ({ roomId, background, backgroundImage }) => {
+    try {
+      const key = `room:${roomId}:state`;
+      const stateStr = await redisClient.get(key);
+      let state = safeParseJSON(stateStr);
+
+      let changed = false;
+      if (background !== undefined) { state.background = background; changed = true; }
+      if (backgroundImage !== undefined) { state.backgroundImage = backgroundImage; changed = true; }
+
+      if (changed) {
+        await redisClient.set(key, JSON.stringify(state));
+        // Broadcast to everyone (including sender, or just others? efficiently sender knows, but consistency is good)
+        // Usually sender updates optimistically.
+        socket.to(roomId).emit("room-state", state);
+      }
+    } catch (e) {
+      console.error("BG Update Error:", e);
+    }
   });
   /* ---------------- REQUEST-ROOM-STATE---------------- */
   socket.on("request-room-state", async (roomId) => {
