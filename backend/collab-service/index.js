@@ -6,6 +6,8 @@ const axios = require("axios");
 const redisClient = require("./redis");
 const { connectRabbit, publishEvent } = require("./rabbit");
 
+const admin = require("./firebase");
+
 const app = express();
 const server = http.createServer(app);
 
@@ -18,12 +20,37 @@ const PORT = 4000;
 
 // connect infra once
 connectRabbit();
+const { connectDB, getDB } = require("./db");
+connectDB(); // async but global db var handles it
+
+
+// Middleware for Socket Auth
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth.token || socket.handshake.query.token;
+  if (!token) {
+    return next(new Error("Authentication error: No token provided"));
+  }
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    socket.user = {
+      uid: decodedToken.uid,
+      email: decodedToken.email,
+      name: decodedToken.name || decodedToken.email.split("@")[0],
+      picture: decodedToken.picture
+    };
+    next();
+  } catch (err) {
+    console.error("Socket Auth Error:", err.message);
+    next(new Error("Authentication error: Invalid Token"));
+  }
+});
 
 /**
  * Socket.IO connection
  */
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log(`User connected: ${socket.id} (${socket.user?.email})`);
 
   // Helper function for safe JSON parsing
   function safeParseJSON(str, defaultValue = { objects: [] }) {
@@ -54,27 +81,92 @@ io.on("connection", (socket) => {
 
       if (state) {
         socket.emit("room-state", safeParseJSON(state));
+      } else {
+        // Try loading from MongoDB (Long-term persistence)
+        const db = getDB();
+        const savedState = await db.collection("room_states").findOne({ _id: roomId });
+        if (savedState && savedState.objects) {
+          // Enrich state into proper format
+          const loadedState = { objects: savedState.objects, history: { undo: [], redo: [] } };
+          // Save to Redis (Hot Cache)
+          await redisClient.set(key, JSON.stringify(loadedState));
+          socket.emit("room-state", loadedState);
+          console.log(`[PERSIST] Loaded room ${roomId} from MongoDB.`);
+        }
       }
 
-      socket.to(roomId).emit("user-joined", {
-        socketId: socket.id,
-      });
+      // Track active users using Hash: SocketID -> UserProfile
+      const participantsKey = `room:${roomId}:participants`;
 
-      // Track active users
-      const userKey = `room:${roomId}:users`;
-      await redisClient.sAdd(userKey, socket.id);
-      const activeUsers = await redisClient.sMembers(userKey);
-      console.log(`[JOIN] ${socket.id} joined ${roomId}. Users: ${activeUsers.length}`);
-      io.to(roomId).emit("room-users", activeUsers);
+      // Default fallback if socket.user is missing (shouldn't happen with middleware)
+      const userProfile = socket.user || { uid: "anon", name: "Anonymous", email: "anon@example.com" };
+
+      await redisClient.hSet(participantsKey, socket.id, JSON.stringify(userProfile));
+
+      const allParticipantsRaw = await redisClient.hVals(participantsKey);
+      const allParticipants = allParticipantsRaw.map(p => JSON.parse(p));
+
+      // Deduplicate users for the list
+      // We use a Map to keep unique users (by uid)
+      const uniqueUsersMap = new Map();
+      allParticipants.forEach(u => uniqueUsersMap.set(u.uid, u));
+      const uniqueUsers = Array.from(uniqueUsersMap.values());
+
+      // Check if this is the FIRST connection for this user
+      const userInstanceCount = allParticipants.filter(p => p.uid === userProfile.uid).length;
+
+      if (userInstanceCount === 1) {
+        // First time this user joined
+        socket.to(roomId).emit("user-joined", {
+          user: userProfile,
+          socketId: socket.id, // Keep socketId for reference/cursors
+        });
+      }
+
+      console.log(`[JOIN] ${userProfile.name} (${socket.id}) joined ${roomId}. Total Unique: ${uniqueUsers.length}`);
+      io.to(roomId).emit("room-users", uniqueUsers);
 
       // Handle disconnect to clean up
       socket.on("disconnect", async () => {
         try {
-          await redisClient.sRem(userKey, socket.id);
-          const remaining = await redisClient.sMembers(userKey);
-          console.log(`[LEAVE] ${socket.id} left ${roomId}. Remaining: ${remaining.length}`);
-          io.to(roomId).emit("room-users", remaining);
-          io.to(roomId).emit("user-left", { socketId: socket.id });
+          // Remove from Hash
+          await redisClient.hDel(participantsKey, socket.id);
+
+          // Re-calculate state
+          const remainingRaw = await redisClient.hVals(participantsKey);
+          const remainingAll = remainingRaw.map(p => JSON.parse(p));
+
+          const remainingUniqueMap = new Map();
+          remainingAll.forEach(u => remainingUniqueMap.set(u.uid, u));
+          const remainingUnique = Array.from(remainingUniqueMap.values());
+
+          // Check if user is completely gone
+          const remainingInstances = remainingAll.filter(p => p.uid === userProfile.uid).length;
+
+          if (remainingInstances === 0) {
+            console.log(`[LEAVE] ${userProfile.name} left ${roomId} completely.`);
+            io.to(roomId).emit("user-left", { user: userProfile, socketId: socket.id });
+
+            // SAVE STATE TO MONGODB (Persistence)
+            const key = `room:${roomId}:state`;
+            const stateRaw = await redisClient.get(key);
+            if (stateRaw) {
+              const state = JSON.parse(stateRaw);
+              const db = getDB();
+              await db.collection("room_states").updateOne(
+                { _id: roomId },
+                { $set: { objects: state.objects, updatedAt: new Date() } },
+                { upsert: true }
+              );
+              console.log(`[PERSIST] Saved room ${roomId} to MongoDB.`);
+            }
+
+          } else {
+            console.log(`[LEAVE] ${userProfile.name} closed a tab. Instances left: ${remainingInstances}`);
+          }
+
+          io.to(roomId).emit("room-users", remainingUnique);
+
         } catch (e) {
           console.error("Disconnect processing error:", e);
         }

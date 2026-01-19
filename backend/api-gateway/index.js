@@ -1,6 +1,7 @@
 const express = require("express");
 const roomRoutes = require("./routes/roomRoutes");
 const cors = require("cors");
+const { connectDB } = require("./db");
 
 const app = express();
 const PORT = 5000;
@@ -14,6 +15,8 @@ app.get("/health", (req, res) => {
 
 app.use("/room", roomRoutes);
 
-app.listen(PORT, () => {
-  console.log(`API Gateway running on port ${PORT}`);
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`API Gateway running on port ${PORT}`);
+  });
 });
