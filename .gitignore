@@ -1,0 +1,17 @@
+# env files
+.env
+.env.local
+.env.*.local
+
+# firebase
+service-account.json
+
+# node
+node_modules/
+
+# next
+.next/
+out/
+
+# logs
+*.log
