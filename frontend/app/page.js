@@ -3,6 +3,10 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import { createRoom, getRoom, getMyRooms, deleteRoom } from "./lib/api";
+import { AuroraBackground } from "@/components/ui/aurora-background";
+import { motion } from "framer-motion";
+import { Plus, LogOut, Trash2, ArrowRight, LayoutGrid, Search } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Home() {
   const { user, loading, logout } = useAuth();
@@ -56,159 +60,243 @@ export default function Home() {
   }
 
   async function handleDelete(id) {
-    if (!confirm("Are you sure you want to delete this room?")) return;
-    try {
-      const token = await user.getIdToken();
-      await deleteRoom(id, token);
-      setMyRooms(prev => prev.filter(r => r.roomId !== id));
-    } catch (e) {
-      setError("Failed to delete room");
-    }
+    toast("Delete this room?", {
+      description: "This action cannot be undone.",
+      action: {
+        label: "Delete",
+        onClick: async () => {
+          try {
+            const token = await user.getIdToken();
+            await deleteRoom(id, token);
+            setMyRooms(prev => prev.filter(r => r.roomId !== id));
+            toast.success("Room deleted");
+          } catch (e) {
+            toast.error("Failed to delete room");
+          }
+        }
+      },
+      cancel: {
+        label: "Cancel"
+      }
+    });
   }
 
   if (loading || !user) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-gray-900 text-white">
-        <div className="text-xl">Loading...</div>
+      <div className="flex h-screen w-full items-center justify-center bg-black text-white">
+        <div className="animate-pulse flex flex-col items-center gap-4">
+          <div className="h-8 w-8 bg-blue-500 rounded-full animate-bounce"></div>
+          <p className="text-gray-400 font-medium">Loading Idea Room...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gray-900 text-white p-8">
-      <nav className="flex items-center justify-between mb-12">
-        <div className="flex items-center gap-4">
-          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
-            Idea Room
-          </h1>
-          <span className="px-3 py-1 bg-gray-800 rounded-full text-sm text-gray-300">
-            Beta
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            {user.photoURL ? (
-              <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full" />
-            ) : (
-              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+    <AuroraBackground>
+      <div className="relative z-10 w-full max-w-7xl mx-auto px-4 py-8 h-screen flex flex-col">
+        {/* Header */}
+        <motion.nav
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center justify-between mb-12 bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <LayoutGrid className="text-white w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-white tracking-tight">
+                Idea Room
+              </h1>
+              <span className="text-xs text-blue-300 font-medium tracking-wider uppercase">Beta</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/5">
+              {user.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt={user.displayName}
+                  referrerPolicy="no-referrer"
+                  className="w-8 h-8 rounded-full border-2 border-white/10"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                />
+              ) : null}
+              {/* Fallback */}
+              <div
+                className="w-8 h-8 bg-gradient-to-tr from-purple-500 to-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                style={{ display: user.photoURL ? 'none' : 'flex' }}
+              >
                 {user.displayName?.[0] || "U"}
               </div>
-            )}
-            <span className="text-sm font-medium">{user.displayName}</span>
-          </div>
-          <button
-            onClick={logout}
-            className="px-4 py-2 text-sm bg-red-600/10 text-red-400 hover:bg-red-600/20 rounded-lg transition"
-          >
-            Logout
-          </button>
-        </div>
-      </nav>
-
-      <div className="max-w-6xl mx-auto space-y-12">
-        {/* ACTION CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Create Room */}
-          <div className="bg-gray-800/50 p-8 rounded-2xl border border-gray-700/50 backdrop-blur-sm">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-400"></span>
-              Create New Room
-            </h2>
-            <p className="text-gray-400 mb-6 text-sm">
-              Start a fresh infinite canvas for brainstorming.
-            </p>
-            <div className="flex flex-col gap-4">
-              <input
-                placeholder="Give your room a name..."
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="px-4 py-3 bg-gray-900 border border-gray-700 rounded-xl focus:outline-none focus:border-blue-500 transition"
-                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-              />
-              <button
-                onClick={handleCreate}
-                disabled={isProcessing || !title}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isProcessing ? "Creating..." : "Create Room"}
-              </button>
+              <span className="text-sm font-medium text-gray-300">{user.displayName}</span>
             </div>
+            <button
+              onClick={logout}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-full transition-all duration-300"
+              title="Logout"
+            >
+              <LogOut size={20} />
+            </button>
           </div>
+        </motion.nav>
 
-          {/* Join Room */}
-          <div className="bg-gray-800/50 p-8 rounded-2xl border border-gray-700/50 backdrop-blur-sm">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-              Join Existing Room
-            </h2>
-            <p className="text-gray-400 mb-6 text-sm">
-              Paste a Room ID to collaborate with others.
-            </p>
-            <div className="flex flex-col gap-4">
-              <input
-                placeholder="Paste Room ID here..."
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                className="px-4 py-3 bg-gray-900 border border-gray-700 rounded-xl focus:outline-none focus:border-purple-500 transition"
-                onKeyDown={(e) => e.key === "Enter" && handleJoin()}
-              />
-              <button
-                onClick={handleJoin}
-                disabled={isProcessing || !roomId}
-                className="w-full py-3 bg-purple-600 hover:bg-purple-500 rounded-xl font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isProcessing ? "Joining..." : "Join Room"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 overflow-hidden">
+          {/* Left Column: Actions */}
+          <div className="lg:col-span-4 flex flex-col gap-6">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.1 }}
+              className="bg-zinc-900/50 backdrop-blur-xl p-6 rounded-3xl border border-white/10 shadow-2xl"
+            >
+              <h2 className="text-2xl font-bold text-white mb-2">Get Started</h2>
+              <p className="text-gray-400 mb-8 text-sm">Create a new space for your ideas or join an existing session.</p>
 
-
-        {/* MY ROOMS GRID */}
-        <div>
-          <h2 className="text-2xl font-bold mb-6">Your Rooms</h2>
-          {myRooms.length === 0 ? (
-            <div className="text-center py-12 bg-gray-800/30 rounded-2xl border border-gray-700/30 border-dashed">
-              <p className="text-gray-400">No rooms yet. Create one above!</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {myRooms.map(room => (
-                <div key={room.roomId} className="bg-gray-800/50 group hover:bg-gray-800 transition p-5 rounded-xl border border-gray-700/50 hover:border-gray-600 flex flex-col justify-between h-48 relative">
-                  {/* Delete Action - Top Right */}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(room.roomId); }}
-                    className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded text-red-400 transition"
-                    title="Delete Room"
-                  >
-                    🗑️
-                  </button>
-
-                  <div>
-                    <h3 className="font-bold text-lg mb-1 truncate pr-8">{room.title}</h3>
-                    <p className="text-xs text-gray-500">Created {new Date(room.createdAt).toLocaleDateString()}</p>
-                  </div>
-
-                  <div className="mt-4">
+              {/* Create Room */}
+              <div className="mb-8 space-y-4">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider ml-1">New Room</label>
+                <div className="group relative">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-500"></div>
+                  <div className="relative flex gap-2">
+                    <input
+                      placeholder="Project Name..."
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      className="w-full bg-zinc-900 text-white px-4 py-3 rounded-xl border border-white/10 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-600"
+                      onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                    />
                     <button
-                      onClick={() => router.push(`/room/${room.roomId}`)}
-                      className="w-full py-2 bg-gray-700 hover:bg-blue-600 hover:text-white rounded-lg text-sm font-medium transition"
+                      onClick={handleCreate}
+                      disabled={isProcessing || !title}
+                      className="bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20"
                     >
-                      Open Room
+                      <Plus size={24} />
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              </div>
+
+              <div className="w-full h-px bg-white/5 mb-8"></div>
+
+              {/* Join Room */}
+              <div className="space-y-4">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider ml-1">Join Session</label>
+                <div className="group relative">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-500"></div>
+                  <div className="relative flex gap-2">
+                    <input
+                      placeholder="Room ID..."
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      className="w-full bg-zinc-900 text-white px-4 py-3 rounded-xl border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition-all placeholder:text-gray-600"
+                      onKeyDown={(e) => e.key === "Enter" && handleJoin()}
+                    />
+                    <button
+                      onClick={handleJoin}
+                      disabled={isProcessing || !roomId}
+                      className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-900/20"
+                    >
+                      <ArrowRight size={24} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Right Column: Library */}
+          <div className="lg:col-span-8 flex flex-col min-h-0">
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.2 }}
+              className="flex-1 bg-zinc-900/30 backdrop-blur-md rounded-3xl border border-white/5 p-6 overflow-hidden flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                  Your Rooms
+                </h2>
+                <div className="bg-white/5 rounded-lg p-1 flex">
+                  <button className="px-3 py-1 bg-white/10 rounded-md text-xs font-medium text-white shadow-sm">All</button>
+                  <button className="px-3 py-1 text-xs font-medium text-gray-500 hover:text-gray-300 transition">Recent</button>
+                </div>
+              </div>
+
+              {myRooms.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50 border-2 border-dashed border-white/5 rounded-2xl m-4">
+                  <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
+                    <LayoutGrid className="w-8 h-8 text-white/40" />
+                  </div>
+                  <p className="text-gray-400 font-medium">No rooms yet</p>
+                  <p className="text-gray-600 text-sm mt-1">Create one to get started</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 custom-scrollbar">
+                  {myRooms.map((room, i) => (
+                    <motion.div
+                      key={room.roomId}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 + 0.3 }}
+                      onClick={() => router.push(`/room/${room.roomId}`)}
+                      className="group relative bg-zinc-800/40 hover:bg-zinc-800/80 p-5 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all duration-300 cursor-pointer flex flex-col justify-between h-40"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/5 group-hover:to-purple-500/5 rounded-2xl transition-all duration-500"></div>
+
+                      <div className="relative z-10">
+                        <h3 className="font-bold text-lg text-gray-200 group-hover:text-white transition line-clamp-1">{room.title}</h3>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Modified {new Date(room.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      <div className="relative z-10 flex items-center justify-between mt-4">
+                        <div className="flex -space-x-2">
+                          {/* Fake avatars for visual effect if we had collaborators */}
+                          <div className="w-6 h-6 rounded-full bg-blue-500 border border-zinc-900 flex items-center justify-center text-[8px] text-white font-bold">You</div>
+                        </div>
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(room.roomId); }}
+                          className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 flex items-center justify-center transition"
+                          title="Delete Room"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </div>
         </div>
-      </div>
+
+        {/* Footer */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="text-center mt-8 text-gray-600 text-xs"
+        >
+          <p>© 2026 Idea Room. Crafted with creativity.</p>
+        </motion.div>
+      </div >
 
       {error && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-red-500/10 border border-red-500/50 text-red-500 px-6 py-3 rounded-xl backdrop-blur-md">
+        <motion.div
+          initial={{ opacity: 0, y: 20, x: "-50%" }}
+          animate={{ opacity: 1, y: 0, x: "-50%" }}
+          className="fixed bottom-8 left-1/2 bg-red-500/10 border border-red-500/20 text-red-200 px-6 py-3 rounded-xl backdrop-blur-md shadow-xl"
+        >
           {error}
-        </div>
-      )}
-    </main>
+        </motion.div>
+      )
+      }
+    </AuroraBackground >
   );
 }

@@ -7,6 +7,19 @@ import html2canvas from "html2canvas";
 import { useAuth } from "../../../context/AuthContext";
 import { useRouter } from "next/navigation";
 
+import {
+  MousePointer2, Hand, Pencil, Eraser, Undo, Redo,
+  Type, Square, Circle, Triangle, Diamond, Share2,
+  Minus, Plus, Download, Settings, Layers, Trash2,
+  Image as ImageIcon, ChevronDown, ChevronUp
+} from "lucide-react";
+import {
+  Button, Tooltip, Dropdown, DropdownTrigger,
+  DropdownMenu, DropdownItem, Slider, Popover,
+  PopoverTrigger, PopoverContent
+} from "@heroui/react";
+import { toast } from "sonner";
+
 export default function RoomPage({ params }) {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -99,11 +112,18 @@ export default function RoomPage({ params }) {
     getRoom(roomId).then(setRoom);
   }, [roomId, user]);
 
-  /* ---------------- SOCKET ---------------- */
+  const [hasJoined, setHasJoined] = useState(false);
+
+  // ... (rest of state definitions)
+
+  // ...
+
   /* ---------------- SOCKET ---------------- */
   useEffect(() => {
     if (!roomId) return;
     if (loading || !user) return;
+    // Wait for room to be loaded to know if we are owner
+    if (!room) return;
 
     let socket;
 
@@ -112,47 +132,71 @@ export default function RoomPage({ params }) {
         const token = await user.getIdToken();
         socket = connectSocket(token);
 
-        function join() {
-          socket.emit("join-room", roomId);
+        function attemptJoin() {
+          if (user.uid === room.ownerId) {
+            socket.emit("join-room", roomId);
+            setHasJoined(true);
+          } else {
+            toast.loading("Requesting to join...");
+            socket.emit("join-request", { roomId });
+          }
         }
 
         if (socket.connected) {
-          join();
+          attemptJoin();
         } else {
-          socket.on("connect", join);
+          socket.on("connect", attemptJoin);
         }
 
         socket.on("connect_error", (err) => {
           console.error("Socket Connect Error", err);
           if (err.message && err.message.includes("Authentication")) {
-            // Token might be expired or invalid
             router.push("/auth");
           }
         });
 
-        socket.on("room-state", (state) => {
-          if (state.objects) setObjects(state.objects);
-          // Handle background sync if needed (previously complex logic was simplified?)
-          // If we want to sync background:
-          // if (state.background) setBackgroundColor(state.background);
-          // if (state.backgroundImage) setBackgroundImage(state.backgroundImage);
-          // For now, keeping it simple as per previous "room-state" logic which just did setObjects in some versions.
-          // But let's check if we need to sync active users from state? Usually "room-users" handles that.
+        // JOIN FLOW
+        socket.on("join-approved", () => {
+          toast.dismiss();
+          toast.success("Join approved!");
+          socket.emit("join-room", roomId);
+          setHasJoined(true);
         });
 
-        socket.on("room-bg-update", ({ background, backgroundImage }) => {
-          // We need state setters for these if they exist in this component.
-          // Looking at previous state vars... I don't see setBackgroundColor in the top lines I viewed.
-          // I see `color`, `strokeStyle` etc.
-          // I'll assume they might handle it elsewhere or I should check if I missed them.
-          // Wait, "room-bg-update" was added by me in Phase 11.
-          // Use document.body.style or similar if no React state?
-          // Previously it was: 
-          // socket.on("room-bg-update", (bg) => { ... });
-          // I will leave this empty/commented if I can't find the setters, to avoid ReferenceError.
-          // actually, I'll print to console for now.
-          console.log("Background update received", background, backgroundImage);
+        socket.on("join-denied", ({ reason }) => {
+          toast.dismiss();
+          toast.error(`Join denied: ${reason}`);
+          setTimeout(() => router.push("/"), 2000);
         });
+
+        socket.on("join-request-notification", ({ user: requester, socketId }) => {
+          const tId = `join-req-${socketId}`;
+          toast(`Join Request: ${requester.name}`, {
+            id: tId,
+            description: "Wants to join the room",
+            action: {
+              label: "Approve",
+              onClick: () => {
+                socket.emit("join-response", { requesterSocketId: socketId, approved: true });
+                toast.dismiss(tId);
+              }
+            },
+            cancel: {
+              label: "Deny",
+              onClick: () => {
+                socket.emit("join-response", { requesterSocketId: socketId, approved: false });
+                toast.dismiss(tId);
+              }
+            },
+            duration: Infinity,
+          });
+        });
+
+        socket.on("room-state", (state) => {
+          if (state.objects) setObjects(state.objects);
+        });
+
+        // ... (rest of handlers)
 
         socket.on("object-created", (obj) => {
           setObjects((prev) => {
@@ -196,7 +240,6 @@ export default function RoomPage({ params }) {
         });
 
         socket.on("cursor-moved", ({ socketId, position, userId, userName, color }) => {
-          // don't show own cursor
           if (socketId === socket.id) return;
           setOtherCursors((prev) => ({
             ...prev,
@@ -204,19 +247,19 @@ export default function RoomPage({ params }) {
           }));
         });
 
+        // ... (rest of user handlers)
         socket.on("room-users", (users) => {
           setActiveUsers(users || []);
         });
 
         socket.on("user-joined", ({ user: u }) => {
-          if (u && u.name) addToast(`${u.name} joined`);
+          if (u && u.name) toast.success(`${u.name} joined`);
         });
 
         socket.on("user-left", ({ user: u, socketId }) => {
-          if (u && u.name) addToast(`${u.name} left`);
+          if (u && u.name) toast.info(`${u.name} left`);
           setOtherCursors((prev) => {
             const next = { ...prev };
-            // remove by socketId because cursors are socket-based
             delete next[socketId];
             return next;
           });
@@ -229,12 +272,17 @@ export default function RoomPage({ params }) {
     }
 
     initSocket();
+    // return ... (omitted for brevity in prompt but tool will replace block)
+
 
     return () => {
       const s = getSocket();
       if (s) {
-        s.off("connect");
+        s.off("connect"); // Clean up all listeners manually or use offAny if supported, but manual is safer
         s.off("connect_error");
+        s.off("join-approved");
+        s.off("join-denied");
+        s.off("join-request-notification");
         s.off("room-state");
         s.off("room-bg-update");
         s.off("object-created");
@@ -249,7 +297,7 @@ export default function RoomPage({ params }) {
         s.disconnect();
       }
     };
-  }, [roomId, user, loading, router]); // Added router to deps
+  }, [roomId, user, loading, router, room]); // Added room to deps to wait for it before connecting
 
 
 
@@ -272,6 +320,7 @@ export default function RoomPage({ params }) {
 
   /* ---------------- DRAG ---------------- */
   function onMouseDown(e, obj) {
+    if (!hasJoined) return;
     if (resizingId || tool === "pan") return;
 
     handleSelect(e, obj.id);
@@ -567,6 +616,7 @@ export default function RoomPage({ params }) {
 
   useEffect(() => {
     function onKeyDown(e) {
+      if (!hasJoined) return;
       if (editingId) return;
 
       // Cut (Ctrl+X)
@@ -616,84 +666,10 @@ export default function RoomPage({ params }) {
   });
 
   /* ---------------- TOOLS ---------------- */
-  function addText() {
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "TEXT",
-        x: (window.innerWidth / 2 - pan.x) / zoom - 60,
-        y: (window.innerHeight / 2 - pan.y) / zoom - 20,
-        fontSize,
-        fontWeight,
-        textAlign,
-        color, // text color
-        data: {
-          text: "New Idea",
-          width: 120, // autosize?
-          height: 40,
-        },
-      },
-    });
-  }
-  function selectStrokeAtPoint(x, y) {
-    // Apply inverse transform for pan/zoom
-    const worldX = (x - pan.x) / zoom;
-    const worldY = (y - pan.y) / zoom;
-    const hit = objects.find(
-      o => o.type === "STROKE" && isPointNearStroke({ x: worldX, y: worldY }, o)
-    );
-
-    if (hit) setSelectedIds([hit.id]);
-  }
 
 
-  function addNode() {
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "NODE",
-        x: (window.innerWidth / 2 - pan.x) / zoom - 60,
-        y: (window.innerHeight / 2 - pan.y) / zoom - 20,
-        data: { label: "New Node" },
-      },
-    });
-  }
 
-  function addShape(shape) {
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "SHAPE",
-        x: (window.innerWidth / 2 - pan.x) / zoom - 70,
-        y: (window.innerHeight / 2 - pan.y) / zoom - 45,
-        // Style Props
-        strokeStyle, // solid/dashed/dotted
-        strokeWidth,
-        opacity,
-        borderRadius: shape === "rect" ? borderRadius : 0,
-        data:
-          shape === "rect"
-            ? { shape: "rect", width: 140, height: 90, color: color || "#D0EBFF" }
-            : { shape: "circle", radius: 50, color: color || "#FFD8A8" },
-      },
-    });
-  }
 
-  function createEdge(from, to) {
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "EDGE",
-        startArrow: true, // Default
-        endArrow: true,   // Default
-        data: { from, to },
-      },
-    });
-  }
   function distance(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
@@ -733,7 +709,30 @@ export default function RoomPage({ params }) {
   }
 
 
+  function addText() {
+    if (!hasJoined) return;
+    connectSocket().emit("object-create", {
+      roomId,
+      object: {
+        id: crypto.randomUUID(),
+        type: "TEXT",
+        x: (window.innerWidth / 2 - pan.x) / zoom - 60,
+        y: (window.innerHeight / 2 - pan.y) / zoom - 20,
+        fontSize,
+        fontWeight,
+        textAlign,
+        color,
+        data: {
+          text: "New Idea",
+          width: 120,
+          height: 40,
+        },
+      },
+    });
+  }
+
   function addNode() {
+    if (!hasJoined) return;
     connectSocket().emit("object-create", {
       roomId,
       object: {
@@ -747,6 +746,7 @@ export default function RoomPage({ params }) {
   }
 
   function addShape(shape) {
+    if (!hasJoined) return;
     connectSocket().emit("object-create", {
       roomId,
       object: {
@@ -772,6 +772,7 @@ export default function RoomPage({ params }) {
   }
 
   function createEdge(from, to) {
+    if (!hasJoined) return;
     connectSocket().emit("object-create", {
       roomId,
       object: {
@@ -788,6 +789,7 @@ export default function RoomPage({ params }) {
   }
 
   function onDrawMouseDown(e) {
+    if (!hasJoined) return;
     if (tool !== "draw" && tool !== "highlighter") return;
 
     e.preventDefault();
@@ -1108,387 +1110,151 @@ export default function RoomPage({ params }) {
 
   /* ---------------- UI ---------------- */
   return (
-    <main style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#1e1e1e", color: "#ffffff", overflow: "hidden" }}>
+    <main className="h-screen w-full flex flex-col bg-zinc-950 text-white overflow-hidden relative selection:bg-blue-500/30">
 
-      {/* 1. HEADER (Fixed) */}
-      <div style={{
-        height: "auto",
-        padding: "10px 20px",
-        background: "#2c2e33",
-        borderBottom: "1px solid #444",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        zIndex: 10,
-        flexShrink: 0
-      }}>
-        {/* Row 1: Title + Tools */}
-        <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button onClick={() => router.push("/")} title="Back to Dashboard" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20 }}>🏠</button>
-              <h1 style={{ margin: 0, fontSize: 20, fontWeight: "bold", whiteSpace: "nowrap" }}>{room ? room.title : "Loading..."}</h1>
-            </div>
+      {/* 🚀 NEW FLOATING UI */}
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* Creation Tools */}
-              <button onClick={addText} title="Add Text">➕ Text</button>
-              <button onClick={() => addShape("rect")} title="Rectangle">⬛</button>
-              <button onClick={() => addShape("circle")} title="Circle">⚪</button>
-              <button onClick={() => addShape("triangle")} title="Triangle">🔺</button>
-              <button onClick={() => addShape("diamond")} title="Diamond">💠</button>
-              <button onClick={addNode} title="Node">➕ Node</button>
-            </div>
+      {/* 1. TOP BAR */}
+      <div className="absolute top-4 left-4 right-4 z-50 flex items-center justify-between pointer-events-none">
 
-            <div style={{ width: 1, height: 24, background: "#666" }}></div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* Mode Tools */}
-              <button
-                onClick={() => setTool("select")}
-                style={{
-                  background: tool === "select" ? "#1971c2" : "#444",
-                  color: "white", padding: "6px 12px", borderRadius: 4, border: "1px solid #666"
-                }}
-              >
-                Select
-              </button>
-              <button
-                onClick={() => setTool("pan")}
-                style={{
-                  background: tool === "pan" ? "#1971c2" : "#444",
-                  color: "white", padding: "6px 12px", borderRadius: 4, border: "1px solid #666"
-                }}
-              >
-                ✋ Pan
-              </button>
-              <button
-                onClick={() => setTool("draw")}
-                style={{
-                  background: tool === "draw" ? "#1971c2" : "#444",
-                  color: "white", padding: "6px 12px", borderRadius: 4, border: "1px solid #666"
-                }}
-              >
-                ✏️ Draw
-              </button>
-              <button
-                onClick={() => setTool("erase")}
-                style={{
-                  background: tool === "erase" ? "#e03131" : "#444",
-                  color: "white", padding: "6px 12px", borderRadius: 4, border: "1px solid #666"
-                }}
-              >
-                🧽 Erase
-              </button>
-            </div>
-
-            <div style={{ width: 1, height: 24, background: "#666" }}></div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <button onClick={() => connectSocket().emit("undo", { roomId })}>⬅️</button>
-              <button onClick={() => connectSocket().emit("redo", { roomId })}>➡️</button>
-            </div>
-          </div>
-
-          {/* Right Actions */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {/* Background */}
-            <label title="Background Color" style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
-              🎨 <input type="color" value={room.background || "#1e1e1e"} onChange={e => {
-                const val = e.target.value;
-                setRoom(r => ({ ...r, background: val }));
-                connectSocket().emit("room-bg-update", { roomId, background: val });
-              }} style={{ width: 24, height: 24, border: "none", background: "transparent", marginLeft: 4 }} />
-            </label>
-
-            {/* Background Buttons Removed as per request */}
-
-            <button onClick={() => setZoom(1)}>🔍 {(zoom * 100).toFixed(0)}%</button>
-
-            {/* Export Button (Smart) */}
-            // Export Button (Robust Canvas Render)
-            <button onClick={async () => {
-              if (objects.length === 0) {
-                alert("Nothing to export!");
-                return;
-              }
-
-              // 1. Calculate Bounding Box
-              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-              objects.forEach(o => {
-                let ox = o.x, oy = o.y, ow = 0, oh = 0;
-                if (o.type === "SHAPE") {
-                  ow = (o.data.shape === "circle" ? o.data.radius * 2 : o.data.width) || 0;
-                  oh = (o.data.shape === "circle" ? o.data.radius * 2 : o.data.height) || 0;
-                } else if (o.type === "NODE" || o.type === "TEXT") {
-                  ow = o.data.width || 120; oh = o.data.height || 40;
-                } else if (o.type === "STROKE") {
-                  if (o.points && o.points.length > 0) {
-                    const xs = o.points.map(p => p.x); const ys = o.points.map(p => p.y);
-                    ox = Math.min(...xs); oy = Math.min(...ys); ow = Math.max(...xs) - ox; oh = Math.max(...ys) - oy;
-                  }
-                } else if (o.type === "IMAGE") { ow = o.data.width; oh = o.data.height; }
-
-                if (isFinite(ox) && isFinite(oy)) {
-                  if (ox < minX) minX = ox; if (oy < minY) minY = oy;
-                  if (ox + ow > maxX) maxX = ox + ow; if (oy + oh > maxY) maxY = oy + oh;
-                }
-              });
-
-              if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 800; maxY = 600; }
-
-              const PADDING = 50;
-              minX -= PADDING; minY -= PADDING; maxX += PADDING; maxY += PADDING;
-              const width = maxX - minX;
-              const height = maxY - minY;
-
-              // 2. Create off-screen canvas
-              const canvas = document.createElement('canvas');
-              canvas.width = width;
-              canvas.height = height;
-              const ctx = canvas.getContext('2d');
-
-              // 3. Draw Background
-              if (room.background && room.background.startsWith("#")) {
-                ctx.fillStyle = room.background;
-                ctx.fillRect(0, 0, width, height);
-              } else {
-                ctx.fillStyle = "#1e1e1e"; // default
-                ctx.fillRect(0, 0, width, height);
-              }
-
-              // Draw Background Image if present
-              if (room.backgroundImage) {
-                try {
-                  const bgImg = new Image();
-                  bgImg.crossOrigin = "anonymous";
-                  await new Promise((resolve) => {
-                    bgImg.onload = resolve;
-                    bgImg.onerror = resolve; // proceed anyway
-                    bgImg.src = room.backgroundImage;
-                  });
-                  // Background Image Logic: "cover" or fixed? 
-                  // Frontend uses "cover" and fixed position typically, but user asked for "draw on image".
-                  // If we want WYSIWYG with Pan, we just draw it tiled or covered?
-                  // Actually, if we want it to move with pan, we need to know WHERE it is.
-                  // Current CSS: `backgroundPosition: calc(50% + pan.x)`
-                  // This means the image origin is central. 
-                  // For simple "export what I drew", let's assume standard image placement or 
-                  // if the user wants purely the canvas content, we stick to objects.
-                  // The user previously requested "remove bg url option" because of complexity.
-                  // So we might skip complex BG image logic here unless sticking to simple color.
-                  // IF there is a BG image, we'll try to draw it covering the rect.
-                  if (bgImg.width) {
-                    // Draw tiled or cover? Let's just draw it once at 0,0 relative to "screen" or 
-                    // simplistic: tile it? 
-                    // To match CSS 'cover' over the whole potential infinite area is hard.
-                    // Let's simplified: Draw it to cover the bounding box.
-                    const ratio = Math.max(width / bgImg.width, height / bgImg.height);
-                    const centerX = width / 2;
-                    const centerY = height / 2;
-                    const dw = bgImg.width * ratio;
-                    const dh = bgImg.height * ratio;
-                    ctx.drawImage(bgImg, centerX - dw / 2, centerY - dh / 2, dw, dh);
-                  }
-                } catch (e) {
-                  console.error("Failed to load bg image for export", e);
-                }
-              }
-
-              // 4. Draw Objects
-              // Sort by type/order? We generally just map `objects` in order.
-              // Note: We need to translate coordinates by (-minX, -minY)
-
-              for (const o of objects) {
-                const ox = o.x - minX;
-                const oy = o.y - minY;
-
-                ctx.save();
-                ctx.translate(ox, oy);
-
-                if (o.type === "STROKE") {
-                  // Reset translate for points? No, points are absolute world coords.
-                  // So we should NOT translate by ox,oy. 
-                  // We should Translate by -minX, -minY ONLY.
-                  ctx.restore(); ctx.save();
-                  ctx.translate(-minX, -minY);
-
-                  if (o.points && o.points.length > 1) {
-                    ctx.beginPath();
-                    ctx.lineCap = "round";
-                    ctx.lineJoin = "round";
-                    ctx.strokeStyle = o.color || "#fff";
-                    ctx.lineWidth = o.width || 2;
-                    // opacity
-                    ctx.globalAlpha = o.opacity || 1;
-                    if (o.strokeStyle === "dashed") ctx.setLineDash([8, 8]);
-                    if (o.strokeStyle === "dotted") ctx.setLineDash([2, 8]);
-
-                    ctx.moveTo(o.points[0].x, o.points[0].y);
-                    for (let i = 1; i < o.points.length; i++) {
-                      ctx.lineTo(o.points[i].x, o.points[i].y);
-                    }
-                    ctx.stroke();
-                  }
-                } else if (o.type === "SHAPE") {
-                  ctx.fillStyle = o.data.color || "#888"; // default
-                  // Shape specific
-                  if (o.data.shape === "circle") {
-                    ctx.beginPath();
-                    ctx.arc(o.data.radius, o.data.radius, o.data.radius, 0, Math.PI * 2);
-                    ctx.fill();
-                  } else if (o.data.shape === "rectangle") {
-                    ctx.fillRect(0, 0, o.data.width, o.data.height);
-                  } else if (o.data.shape === "triangle") {
-                    ctx.beginPath();
-                    ctx.moveTo(o.data.width / 2, 0);
-                    ctx.lineTo(o.data.width, o.data.height);
-                    ctx.lineTo(0, o.data.height);
-                    ctx.closePath();
-                    ctx.fill();
-                  }
-                  // ... add other shapes if needed
-                } else if (o.type === "TEXT") {
-                  ctx.font = `${o.fontWeight || 'normal'} ${o.fontSize || 16}px sans-serif`;
-                  ctx.fillStyle = o.color || "#fff";
-                  ctx.textBaseline = "top";
-                  // basic text wrap not fully supported in simple canvas text, 
-                  // just draw basic text for now
-                  ctx.fillText(o.data.text || "", 0, 0);
-                } else if (o.type === "IMAGE") {
-                  // Load image async?
-                  // To keep this sync-ish for loop, we might need to pre-load or await.
-                  // We can await inside the loop.
-                  try {
-                    const img = new Image();
-                    img.crossOrigin = "anonymous";
-                    await new Promise((resolve, reject) => {
-                      img.onload = resolve;
-                      img.onerror = resolve; // skip
-                      img.src = o.data.src;
-                    });
-                    if (img.width) {
-                      ctx.drawImage(img, 0, 0, o.data.width, o.data.height);
-                    }
-                  } catch (e) { }
-                }
-
-                ctx.restore();
-              }
-
-              // 5. Download
-              const link = document.createElement('a');
-              link.download = (room.title || 'whiteboard') + '.png';
-              link.href = canvas.toDataURL();
-              link.click();
-            }} title="Export PNG" style={{ fontSize: 18, background: "none", border: "none", cursor: "pointer" }}>📷</button>
+        {/* LEFT: Branding & Back */}
+        <div className="bg-zinc-900/80 backdrop-blur-xl border border-white/10 p-2 rounded-2xl flex items-center gap-3 pointer-events-auto shadow-2xl">
+          <button
+            onClick={() => router.push("/")}
+            className="p-2 hover:bg-white/10 rounded-xl transition text-blue-400"
+            title="Back to Dashboard"
+          >
+            <ChevronDown className="rotate-90" size={20} />
+          </button>
+          <div className="h-6 w-px bg-white/10"></div>
+          <div className="px-2">
+            <h1 className="font-bold text-sm text-gray-200 p-0 m-0 leading-none">{room ? room.title : "Loading..."}</h1>
+            <span className="text-[10px] text-gray-500 font-mono">ROOM ID: {room?.id?.slice(0, 6) || "..."}</span>
           </div>
         </div>
 
-        {/* Row 2: Properties Bar + Users */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "#ccc", minHeight: 30 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 20 }}>
-            <span style={{ fontWeight: "bold" }}>Users:</span>
+        {/* CENTER: Users */}
+        <div className="bg-zinc-900/80 backdrop-blur-xl border border-white/10 p-2 rounded-2xl flex items-center gap-4 pointer-events-auto shadow-2xl">
+          <div className="flex -space-x-3 items-center px-2">
             {activeUsers.map((u, i) => (
-              <div key={u.uid || i} title={u.uid === user?.uid ? "You" : u.name || `User ${u.uid}`} style={{ width: 28, height: 28, borderRadius: "50%", background: "#1971c2", border: "1px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, cursor: "help", color: "white", overflow: "hidden" }}>
-                {u.picture ? (
-                  <img src={u.picture} alt={u.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
-                  (u.name?.[0] || "U").toUpperCase()
-                )}
+              <div
+                key={u.uid || i}
+                title={u.name}
+                className="w-8 h-8 rounded-full border-2 border-zinc-900 bg-zinc-800 flex items-center justify-center text-xs font-bold text-white relative z-0 hover:z-10 transition-transform hover:scale-110"
+              >
+                {u.picture ? <img src={u.picture} className="w-full h-full rounded-full object-cover" /> : (u.name?.[0] || "U")}
               </div>
             ))}
-          </div>
-
-          <div style={{ width: 1, height: 20, background: "#444" }}></div>
-
-          {/* Properties */}
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Color: <input type="color" value={color} onChange={e => { setColor(e.target.value); updateSelected({ color: e.target.value }); }} style={{ width: 20, height: 20, border: "none" }} />
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Stroke:
-            <select value={strokeStyle} onChange={e => { setStrokeStyle(e.target.value); updateSelected({ strokeStyle: e.target.value }); }} style={{ background: "#444", color: "white", border: "1px solid #666", borderRadius: 4 }}>
-              <option value="solid">Solid</option>
-              <option value="dashed">Dashed</option>
-              <option value="dotted">Dotted</option>
-            </select>
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Width: <input type="range" min="1" max="20" value={strokeWidth} onChange={e => { setStrokeWidth(Number(e.target.value)); updateSelected({ strokeWidth: Number(e.target.value) }); }} style={{ width: 50 }} /> {strokeWidth}
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Opacity: <input type="range" min="0.1" max="1" step="0.1" value={opacity} onChange={e => { setOpacity(Number(e.target.value)); updateSelected({ opacity: Number(e.target.value) }); }} style={{ width: 50 }} /> {Math.round(opacity * 100)}%
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Radius: <input type="range" min="0" max="50" value={borderRadius} onChange={e => { setBorderRadius(Number(e.target.value)); updateSelected({ borderRadius: Number(e.target.value) }); }} style={{ width: 50 }} />
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            Font:
-            <select value={fontSize} onChange={e => { setFontSize(Number(e.target.value)); updateSelected({ fontSize: Number(e.target.value) }); }} style={{ width: 50, background: "#444", color: "white", border: "1px solid #666", borderRadius: 4 }}>
-              <option value="12">12</option>
-              <option value="16">16</option>
-              <option value="24">24</option>
-              <option value="32">32</option>
-              <option value="48">48</option>
-            </select>
-          </label>
-          <button
-            style={{ fontWeight: fontWeight === 'bold' ? 'bold' : 'normal', background: fontWeight === 'bold' ? '#1971c2' : '#444', color: "white", border: "1px solid #666", padding: "2px 8px", borderRadius: 4 }}
-            onClick={() => { const nw = fontWeight === 'bold' ? 'normal' : 'bold'; setFontWeight(nw); updateSelected({ fontWeight: nw }); }}
-          >B</button>
-
-          {(tool === "draw" || tool === "highlighter") && (
-            <button
-              style={{ background: tool === 'highlighter' ? '#ffd43b' : '#444', color: tool === 'highlighter' ? 'black' : 'white', border: "1px solid #666", padding: "2px 8px", borderRadius: 4, marginLeft: 10 }}
-              onClick={() => setTool(tool === 'highlighter' ? 'draw' : 'highlighter')}
-            >
-              🖊️ Highlighter
-            </button>
-          )}
-
-          {/* Layering (only if selected) */}
-          {selectedIds.length > 0 && (
-            <div style={{ display: "flex", marginLeft: 20, gap: 4 }}>
-              <button title="Bring to Front" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "front" })}>⏫</button>
-              <button title="Identify Up" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "forward" })}>🔼</button>
-              <button title="Identify Down" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "backward" })}>🔽</button>
-              <button title="Send to Back" onClick={() => connectSocket().emit("object-reorder", { roomId, objectIds: selectedIds, action: "back" })}>⏬</button>
+            <div className="w-8 h-8 rounded-full border-2 border-zinc-900 bg-zinc-800/50 flex items-center justify-center text-[10px] text-gray-400">
+              +{activeUsers.length}
             </div>
-          )}
+          </div>
+          <div className="h-6 w-px bg-white/10"></div>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href);
+              toast.success("Link copied to clipboard!");
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-bold transition text-white"
+          >
+            <Share2 size={14} />
+            <span className="hidden sm:inline">Share</span>
+          </button>
+        </div>
 
-          {/* Image Upload Input for Object */}
-          <div style={{ marginLeft: "auto" }}>
-            <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, background: "#444", padding: "2px 8px", borderRadius: 4, fontSize: 12 }}>
-              ➕ Add Image
-              <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                  const img = new Image();
-                  img.onload = () => {
-                    // Resize logic
-                    const maxDim = 400; let w = img.width; let h = img.height;
-                    if (w > maxDim || h > maxDim) { const r = w / h; if (w > h) { w = maxDim; h = maxDim / r } else { h = maxDim; w = maxDim * r } }
-                    connectSocket().emit("object-create", {
-                      roomId, object: { id: crypto.randomUUID(), type: "IMAGE", x: (window.innerWidth / 2 - pan.x) / zoom, y: (window.innerHeight / 2 - pan.y) / zoom, data: { src: evt.target.result, width: w, height: h } }
-                    });
-                  };
-                  img.src = evt.target.result;
-                };
-                reader.readAsDataURL(file);
-              }} />
-            </label>
+        {/* RIGHT: Actions */}
+        <div className="bg-zinc-900/80 backdrop-blur-xl border border-white/10 p-2 rounded-2xl flex items-center gap-2 pointer-events-auto shadow-2xl">
+          <div className="flex items-center gap-1">
+            <button onClick={() => connectSocket().emit("undo", { roomId })} className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition"><Undo size={18} /></button>
+            <button onClick={() => connectSocket().emit("redo", { roomId })} className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition"><Redo size={18} /></button>
+          </div>
+          <div className="h-6 w-px bg-white/10"></div>
+          <div className="flex items-center gap-2 px-2">
+            <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="text-gray-400 hover:text-white"><Minus size={14} /></button>
+            <span className="text-xs font-mono w-10 text-center">{(zoom * 100).toFixed(0)}%</span>
+            <button onClick={() => setZoom(z => Math.min(5, z + 0.1))} className="text-gray-400 hover:text-white"><Plus size={14} /></button>
           </div>
         </div>
       </div>
+
+      {/* 2. BOTTOM TOOLBAR */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+        <div className="bg-zinc-900/90 backdrop-blur-2xl border border-white/10 p-2 rounded-full flex items-center gap-2 shadow-2xl ring-1 ring-white/5">
+          <ToolBtn icon={MousePointer2} active={tool === "select"} onClick={() => setTool("select")} label="Select" />
+          <ToolBtn icon={Hand} active={tool === "pan"} onClick={() => setTool("pan")} label="Pan" />
+          <div className="w-px h-8 bg-white/10 mx-2"></div>
+          <ToolBtn icon={Square} active={false} onClick={() => addShape("rect")} label="Rectangle" />
+          <ToolBtn icon={Circle} active={false} onClick={() => addShape("circle")} label="Circle" />
+          <ToolBtn icon={Triangle} active={false} onClick={() => addShape("triangle")} label="Triangle" />
+          <ToolBtn icon={Type} active={false} onClick={addText} label="Text" />
+          <ToolBtn icon={ImageIcon} active={false} onClick={() => document.getElementById('img-upload')?.click()} label="Image" />
+          <input id="img-upload" type="file" accept="image/*" className="hidden" onChange={(e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+              const img = new Image();
+              img.onload = () => {
+                const maxDim = 400; let w = img.width; let h = img.height;
+                if (w > maxDim || h > maxDim) { const r = w / h; if (w > h) { w = maxDim; h = maxDim / r } else { h = maxDim; w = maxDim * r } }
+                connectSocket().emit("object-create", {
+                  roomId, object: { id: crypto.randomUUID(), type: "IMAGE", x: (window.innerWidth / 2 - pan.x) / zoom, y: (window.innerHeight / 2 - pan.y) / zoom, data: { src: evt.target.result, width: w, height: h } }
+                });
+              };
+              img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+          }} />
+          <div className="w-px h-8 bg-white/10 mx-2"></div>
+          <ToolBtn icon={Pencil} active={tool === "draw"} onClick={() => setTool("draw")} label="Draw" />
+          <ToolBtn icon={Eraser} active={tool === "erase"} onClick={() => setTool("erase")} label="Erase" />
+        </div>
+      </div>
+
+      {/* 3. CONTEXT MENU / PROPERTIES (Floating Left) */}
+      {(selectedIds.length > 0 || tool === "draw") && (
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-50 pointer-events-auto">
+          <div className="bg-zinc-900/90 backdrop-blur-xl border border-white/10 p-4 rounded-2xl shadow-2xl flex flex-col gap-6 w-16 items-center animate-in slide-in-from-left-4 fade-in duration-300">
+            {/* Color */}
+            <div className="relative group">
+              <div className="w-8 h-8 rounded-full border-2 border-white/20 cursor-pointer shadow-lg" style={{ backgroundColor: color }}></div>
+              <input type="color" className="absolute inset-0 opacity-0 cursor-pointer" value={color} onChange={e => { setColor(e.target.value); updateSelected({ color: e.target.value }); }} />
+            </div>
+
+            {/* Width */}
+            <div className="flex flex-col gap-2 items-center group relative">
+              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition cursor-pointer">
+                <div className="bg-white rounded-full" style={{ width: Math.max(4, strokeWidth / 2), height: Math.max(4, strokeWidth / 2) }}></div>
+              </div>
+              {/* Tooltip slider on hover would be nice, but native range for simplicity */}
+              <input
+                type="range" min="1" max="20"
+                className="absolute left-10 top-2 w-24 opacity-0 group-hover:opacity-100 transition origin-left bg-zinc-800 rounded-lg p-2 border border-white/10"
+                value={strokeWidth}
+                onChange={e => { setStrokeWidth(Number(e.target.value)); updateSelected({ strokeWidth: Number(e.target.value) }); }}
+              />
+            </div>
+
+            {/* Opacity */}
+            <div className="flex flex-col gap-1 items-center">
+              <span className="text-[10px] text-gray-500 font-bold">OP</span>
+              <input type="range" min="0.1" max="1" step="0.1" className="w-20 -rotate-90 origin-center translate-y-6" value={opacity} onChange={e => { setOpacity(Number(e.target.value)); updateSelected({ opacity: Number(e.target.value) }); }} />
+            </div>
+
+            <div className="h-px w-8 bg-white/10 mt-8"></div>
+
+            {/* Delete */}
+            <button onClick={() => {
+              selectedIds.forEach(id => connectSocket().emit("object-delete", { roomId, objectId: id }));
+              setSelectedIds([]);
+            }} className="text-red-400 hover:text-red-300 transition hover:bg-red-500/10 p-2 rounded-lg">
+              <Trash2 size={20} />
+            </button>
+          </div>
+        </div>
+      )}
+
+
 
 
 
@@ -1545,7 +1311,7 @@ export default function RoomPage({ params }) {
           }
 
           // Emit cursor position (throttled conceptually)
-          if (user && Math.random() > 0.6) { // naive throttle ~40% of events
+          if (user && hasJoined && Math.random() > 0.6) { // naive throttle ~40% of events
             const worldX = (x - pan.x) / zoom;
             const worldY = (y - pan.y) / zoom;
             connectSocket().emit("cursor-move", {
@@ -2299,5 +2065,21 @@ function Minimap({ objects, viewport }) {
         background: "rgba(25, 113, 194, 0.2)"
       }} />
     </div>
+  );
+}
+
+function ToolBtn({ icon: Icon, active, onClick, label }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`p-3 rounded-full transition-all group relative flex items-center justify-center ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50' : 'hover:bg-white/10 text-gray-400 hover:text-white'}`}
+    >
+      <Icon size={20} />
+      {label && (
+        <span className="absolute -top-10 left-1/2 -translate-x-1/2 bg-zinc-800 text-white text-[10px] font-bold px-2 py-1 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10">
+          {label}
+        </span>
+      )}
+    </button>
   );
 }

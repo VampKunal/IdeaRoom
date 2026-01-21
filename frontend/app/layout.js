@@ -17,17 +17,19 @@ export const metadata = {
 };
 
 import { AuthProvider } from "../context/AuthContext";
+import { Toaster } from "sonner";
 
 // ...
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
           {children}
+          <Toaster richColors position="top-right" />
         </AuthProvider>
       </body>
     </html>

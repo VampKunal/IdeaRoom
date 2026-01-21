@@ -72,7 +72,7 @@ io.on("connection", (socket) => {
   socket.on("join-room", async (roomId) => {
     try {
       // validate room via API Gateway
-      await axios.get(`http://localhost:3000/room/${roomId}`);
+      await axios.get(`http://localhost:5000/room/${roomId}`);
 
       socket.join(roomId);
 
@@ -177,6 +177,54 @@ io.on("connection", (socket) => {
     } catch (err) {
       console.error("Join room error:", err);
       socket.emit("error", "Invalid room ID or Server Error");
+    }
+  });
+
+  /* ---------------- JOIN REQUEST FLOW ---------------- */
+  socket.on("join-request", async ({ roomId }) => {
+    try {
+      // 1. Get Room Details to find Owner (from API Gateway @ 5000)
+      const res = await axios.get(`http://localhost:5000/room/${roomId}`);
+      const room = res.data;
+      const ownerId = room.ownerId;
+
+      // 2. Find Owner's Socket
+      const participantsKey = `room:${roomId}:participants`;
+
+      const allSockets = await redisClient.hGetAll(participantsKey);
+
+      let ownerSocketId = null;
+
+      for (const [sid, profileStr] of Object.entries(allSockets)) {
+        const p = JSON.parse(profileStr);
+        if (p.uid === ownerId) {
+          ownerSocketId = sid;
+          break;
+        }
+      }
+
+      if (ownerSocketId) {
+        // Emit to owner
+        io.to(ownerSocketId).emit("join-request-notification", {
+          user: socket.user || { name: "Guest", picture: null },
+          socketId: socket.id
+        });
+      } else {
+        // Owner offline -> Strict fail for now
+        socket.emit("join-denied", { reason: "Owner is offline" });
+      }
+
+    } catch (e) {
+      console.error("Join Request Error:", e);
+      socket.emit("error", "Failed to process join request");
+    }
+  });
+
+  socket.on("join-response", ({ requesterSocketId, approved }) => {
+    if (approved) {
+      io.to(requesterSocketId).emit("join-approved");
+    } else {
+      io.to(requesterSocketId).emit("join-denied", { reason: "Host denied entry" });
     }
   });
 

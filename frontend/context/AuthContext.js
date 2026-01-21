@@ -1,6 +1,6 @@
 "use client";
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth, googleProvider } from "../lib/firebase";
 import { useRouter } from "next/navigation";
 
@@ -33,9 +33,34 @@ export const AuthProvider = ({ children }) => {
     const loginWithGoogle = async () => {
         try {
             await signInWithPopup(auth, googleProvider);
-            router.push("/"); // Redirect to home after login
+            router.push("/");
         } catch (error) {
             console.error("Login failed:", error);
+            throw error;
+        }
+    };
+
+    const loginWithEmail = async (email, password) => {
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
+            router.push("/");
+        } catch (error) {
+            console.error("Email login failed:", error);
+            throw error;
+        }
+    };
+
+    const signupWithEmail = async (email, password, name) => {
+        try {
+            const res = await createUserWithEmailAndPassword(auth, email, password);
+            // Update profile with name
+            if (name) {
+                await updateProfile(res.user, { displayName: name });
+            }
+            router.push("/");
+        } catch (error) {
+            console.error("Signup failed:", error);
+            throw error;
         }
     };
 
@@ -49,7 +74,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout }}>
+        <AuthContext.Provider value={{ user, loading, loginWithGoogle, loginWithEmail, signupWithEmail, logout }}>
             {!loading && children}
         </AuthContext.Provider>
     );
