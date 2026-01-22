@@ -18,6 +18,8 @@ const io = new Server(server, {
 
 const PORT = 4000;
 
+const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:5000";
+
 // connect infra once
 connectRabbit();
 const { connectDB, getDB } = require("./db");
@@ -72,7 +74,7 @@ io.on("connection", (socket) => {
   socket.on("join-room", async (roomId) => {
     try {
       // validate room via API Gateway
-      await axios.get(`http://localhost:5000/room/${roomId}`);
+      await axios.get(`${API_GATEWAY_URL}/room/${roomId}`);
 
       socket.join(roomId);
 
@@ -184,7 +186,7 @@ io.on("connection", (socket) => {
   socket.on("join-request", async ({ roomId }) => {
     try {
       // 1. Get Room Details to find Owner (from API Gateway @ 5000)
-      const res = await axios.get(`http://localhost:5000/room/${roomId}`);
+      const res = await axios.get(`${API_GATEWAY_URL}/room/${roomId}`);
       const room = res.data;
       const ownerId = room.ownerId;
 

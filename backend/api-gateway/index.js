@@ -1,3 +1,6 @@
+// Load Firebase Admin (must be before routes that use auth)
+require("./firebase");
+
 const express = require("express");
 const roomRoutes = require("./routes/roomRoutes");
 const cors = require("cors");

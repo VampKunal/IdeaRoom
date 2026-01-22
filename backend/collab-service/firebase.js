@@ -1,6 +1,15 @@
 const admin = require("firebase-admin");
 const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+
+// Only load .env file in local development (not in Docker)
+// In Docker, environment variables come from docker-compose.yml
+if (process.env.NODE_ENV !== "production") {
+  try {
+    require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+  } catch (e) {
+    // .env file not found, that's okay - use environment variables from system
+  }
+}
 
 try {
     if (process.env.FIREBASE_PRIVATE_KEY) {

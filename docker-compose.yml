@@ -1,0 +1,172 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  mongodb:
+    image: mongo:7
+    container_name: idea-room-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: idea_room
+    networks:
+      - idea-room-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: idea-room-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - idea-room-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: idea-room-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP port
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - idea-room-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Services
+  api-gateway:
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: idea-room-api-gateway
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - NODE_ENV=production
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL:-}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - idea-room-network
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    container_name: idea-room-auth-service
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL:-}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY:-}
+    networks:
+      - idea-room-network
+    restart: unless-stopped
+
+  collab-service:
+    build:
+      context: ./backend/collab-service
+      dockerfile: Dockerfile
+    container_name: idea-room-collab-service
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://rabbitmq
+      - API_GATEWAY_URL=http://api-gateway:5000
+      - NODE_ENV=production
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL:-}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api-gateway:
+        condition: service_started
+    networks:
+      - idea-room-network
+    restart: unless-stopped
+
+  snapshot-worker:
+    build:
+      context: ./backend/snapshot-worker
+      dockerfile: Dockerfile
+    container_name: idea-room-snapshot-worker
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - RABBITMQ_URL=amqp://rabbitmq
+      - NODE_ENV=production
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - idea-room-network
+    restart: unless-stopped
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: idea-room-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE=http://localhost:5000
+      - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+    depends_on:
+      - api-gateway
+      - collab-service
+    networks:
+      - idea-room-network
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  idea-room-network:
+    driver: bridge

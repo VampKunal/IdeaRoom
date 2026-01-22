@@ -1,4 +1,14 @@
-require("dotenv").config({ path: "../.env" }); // Load from parent .env
+// Only load .env file in local development (not in Docker)
+// In Docker, environment variables come from docker-compose.yml
+if (process.env.NODE_ENV !== "production") {
+  const dotenv = require("dotenv");
+  try {
+    dotenv.config({ path: "../.env" });
+  } catch (e) {
+    // .env file not found, that's okay - use environment variables from system
+  }
+}
+
 const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");

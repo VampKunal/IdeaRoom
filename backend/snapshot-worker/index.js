@@ -1,9 +1,9 @@
 const amqp = require("amqplib");
 const { MongoClient } = require("mongodb");
 
-const RABBIT_URL = "amqp://localhost";
+const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost";
 const QUEUE = "room-events";
-const MONGO_URL = "mongodb://localhost:27017";
+const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017";
 const DB_NAME = "idea_room";
 
 let eventBuffer = {};
@@ -23,7 +23,7 @@ async function start() {
   console.log("Connected to MongoDB");
 
   // RabbitMQ
-  const connection = await amqp.connect(RABBIT_URL);
+  const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE, { durable: true });
 

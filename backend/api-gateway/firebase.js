@@ -1,7 +1,16 @@
 const admin = require("firebase-admin");
 const path = require("path");
 const dotenv = require("dotenv");
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+// Only load .env file in local development (not in Docker)
+// In Docker, environment variables come from docker-compose.yml
+if (process.env.NODE_ENV !== "production") {
+  try {
+    dotenv.config({ path: path.resolve(__dirname, "../.env") });
+  } catch (e) {
+    // .env file not found, that's okay - use environment variables from system
+  }
+}
 
 // Initialize Firebase Admin SDK
 // 1. Try Service Account File
