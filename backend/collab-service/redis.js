@@ -1,13 +1,32 @@
+// Prefer Upstash REST when set: no persistent TCP, avoids "Socket closed unexpectedly" on Railway.
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  const { Redis } = require("@upstash/redis");
+  const r = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
+  console.log("Redis using Upstash REST API");
+  module.exports = {
+    get: (k) => r.get(k),
+    set: (k, v) => r.set(k, v),
+    hSet: (k, field, val) => r.hset(k, { [field]: val }),
+    hGetAll: (k) => r.hgetall(k).then((o) => o ?? {}),
+    hDel: (k, f) => r.hdel(k, f),
+    hVals: (k) => r.hvals(k).then((a) => a ?? []),
+  };
+  // Skip TCP setup below
+} else {
 const { createClient } = require("redis");
 
-// Upstash: use rediss://default:PASSWORD@host:port (TLS). Local: redis://localhost:6379
+// Upstash TCP: rediss://default:PASSWORD@host:port . Local: redis://localhost:6379
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
 const redisClient = createClient({
   url: REDIS_URL,
   socket: {
-    // Upstash can close idle connections; allow more retries and longer backoff
-    reconnectStrategy: (retries) => (retries > 50 ? new Error("Redis max retries") : Math.min(2000, 100 * (retries + 1))),
+    connectTimeout: 10000,
+    // Never stop retrying (Upstash/network often close sockets). Cap delay at 30s.
+    reconnectStrategy: (retries) => Math.min(30000, 500 * (retries + 1)),
   },
 });
 
@@ -26,6 +45,18 @@ async function ensureConnected() {
   }
 }
 
+function isRetryableRedisError(e) {
+  if (!e) return false;
+  const n = e?.name || "";
+  const m = String(e?.message || "");
+  return (
+    n === "ClientClosedError" ||
+    n === "SocketClosedUnexpectedlyError" ||
+    m.includes("closed") ||
+    m.includes("Socket closed unexpectedly")
+  );
+}
+
 function wrap(name) {
   const fn = redisClient[name].bind(redisClient);
   return async function (...args) {
@@ -33,8 +64,7 @@ function wrap(name) {
     try {
       return await fn(...args);
     } catch (e) {
-      // Upstash or network may have closed the connection; reconnect and retry once
-      if (e?.name === "ClientClosedError" || (e?.message && String(e.message).includes("closed"))) {
+      if (isRetryableRedisError(e)) {
         await ensureConnected();
         return await fn(...args);
       }
@@ -54,3 +84,4 @@ redisClient.hVals = wrap("hVals");
 redisClient.connect().catch(() => {});
 
 module.exports = redisClient;
+}
