@@ -103,7 +103,7 @@ When Railway asks for **Port** (in Settings → Networking or when adding a doma
    | `FIREBASE_PROJECT_ID`| from 1.4                                          |
    | `FIREBASE_CLIENT_EMAIL` | from 1.4                                       |
    | `FIREBASE_PRIVATE_KEY`  | from 1.4 (string, with `\n` or newlines)      |
-   | `CORS_ORIGIN`        | (recommended) `https://YOUR_VERCEL_APP.vercel.app` — your exact Vercel URL, no trailing slash |
+   | `CORS_ORIGIN`        | (recommended) `https://YOUR_VERCEL_APP.vercel.app` — exact Vercel URL, no trailing slash. For multiple: `https://a.vercel.app,https://b.vercel.app` |
 
 7. **Settings** → **Networking** → **Generate Domain**.  
    Example: `https://api-gateway-xxxx.up.railway.app`
@@ -123,7 +123,8 @@ When Railway asks for **Port** (in Settings → Networking or when adding a doma
    |------------------------|---------|
    | `FIREBASE_PROJECT_ID`  | from 1.4 |
    | `FIREBASE_CLIENT_EMAIL`| from 1.4 |
-   | `FIREBASE_PRIVATE_KEY` | from 1.4 | 
+   | `FIREBASE_PRIVATE_KEY` | from 1.4 |
+   | `CORS_ORIGIN`          | (optional) same as api-gateway if the frontend calls auth-service | 
 
 5. **Generate Domain** (optional; only if something will call it by HTTP).
 
@@ -145,7 +146,7 @@ When Railway asks for **Port** (in Settings → Networking or when adding a doma
    | `FIREBASE_PROJECT_ID`| from 1.4                                 |
    | `FIREBASE_CLIENT_EMAIL` | from 1.4                              |
    | `FIREBASE_PRIVATE_KEY`  | from 1.4                              |
-   | `CORS_ORIGIN`        | (optional) `https://YOUR_VERCEL_APP.vercel.app` |
+   | `CORS_ORIGIN`        | (recommended) `https://YOUR_VERCEL_APP.vercel.app` — same as api-gateway; required for Socket.IO from the frontend |
 
 5. **Generate Domain**.  
    Example: `https://collab-service-xxxx.up.railway.app`
@@ -208,7 +209,7 @@ After deploy you get e.g. `https://idea-room-xxx.vercel.app`.
 | `NEXT_PUBLIC_COLLAB_BASE`      | Vercel: frontend | `https://collab-service-xxxx.up.railway.app` |
 | `FIREBASE_*` (backend)         | Railway: api-gateway, auth-service, collab-service | — |
 | `NEXT_PUBLIC_FIREBASE_*`       | Vercel: frontend | — |
-| `CORS_ORIGIN`                  | Railway: api-gateway, collab-service (optional) | `https://yourapp.vercel.app` |
+| `CORS_ORIGIN`                  | Railway: api-gateway, collab-service (recommended); auth-service (optional) | `https://idea-room-ashy.vercel.app` or comma-separated for multiple |
 
 ---
 
@@ -247,7 +248,7 @@ After deploy you get e.g. `https://idea-room-xxx.vercel.app`.
 ## 8. Troubleshooting
 
 - **CORS / Socket.IO:**  
-  Set `CORS_ORIGIN` on api-gateway and collab-service to your Vercel URL (`https://...vercel.app`). If you use a custom domain, use that.
+  Set `CORS_ORIGIN` on **api-gateway** and **collab-service** to your Vercel URL (e.g. `https://idea-room-ashy.vercel.app`), **no trailing slash**. For production + preview use comma-separated: `https://idea-room-ashy.vercel.app,https://idea-room-xxx.vercel.app`. All three (api-gateway, collab-service, auth-service) use the same CORS logic; collab needs it for Socket.IO, api-gateway for `/room` and `/room/my`.
 
 - **MongoDB:**  
   Ensure Atlas Network Access allows `0.0.0.0/0` or Railway IPs, and the user has read/write on the DB.

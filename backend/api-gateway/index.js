@@ -10,16 +10,20 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.set("trust proxy", 1);
-app.use(express.json());
 
-// CORS: allow Vercel frontend. Preflight needs allowedHeaders including Authorization.
+// CORS first (before json) so OPTIONS preflight is handled. Support comma-separated CORS_ORIGIN; trim and drop trailing slash.
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean)
+  : null;
+const corsOrigin = corsOrigins?.length ? (corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins) : true;
 const corsOpts = {
-  origin: process.env.CORS_ORIGIN || true, // true = reflect request origin (allow any)
+  origin: corsOrigin,
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOpts));
+app.use(express.json());
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "api-gateway" });

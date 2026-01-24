@@ -2,18 +2,32 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const axios = require("axios");
+const cors = require("cors");
 
 const redisClient = require("./redis");
 const { connectRabbit, publishEvent } = require("./rabbit");
 
 const admin = require("./firebase");
 
+// CORS: same logic as api-gateway. Comma-separated CORS_ORIGIN; trim and drop trailing slash.
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean)
+  : null;
+const corsOrigin = corsOrigins?.length ? (corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins) : true;
+const corsOpts = {
+  origin: corsOrigin,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
 const app = express();
 app.set("trust proxy", 1);
+app.use(cors(corsOpts));
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN, credentials: true } : { origin: "*" },
+  cors: { origin: corsOrigin, credentials: true },
   maxHttpBufferSize: 1e7, // 10 MB
 });
 

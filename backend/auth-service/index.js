@@ -13,8 +13,20 @@ const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
 
+// CORS: same as api-gateway. Comma-separated CORS_ORIGIN; trim and drop trailing slash.
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean)
+  : null;
+const corsOrigin = corsOrigins?.length ? (corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins) : true;
+const corsOpts = {
+  origin: corsOrigin,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
 const app = express();
-app.use(cors());
+app.use(cors(corsOpts));
 app.use(express.json());
 
 // Initialize Firebase Admin
