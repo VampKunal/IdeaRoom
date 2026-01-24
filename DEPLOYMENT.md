@@ -74,10 +74,14 @@ From [Firebase Console](https://console.firebase.google.com) → Project → **P
 
 Deploy **4 services** from the same repo:
 
-- `api-gateway`
-- `auth-service`
-- `collab-service`
-- `snapshot-worker`
+| Service        | Port   | Generate domain? |
+|----------------|--------|------------------|
+| `api-gateway`  | **5000** | Yes (required) |
+| `auth-service` | **8003** | Optional       |
+| `collab-service` | **4000** | Yes (required) |
+| `snapshot-worker` | — (no HTTP) | No  |
+
+When Railway asks for **Port** (in Settings → Networking or when adding a domain), use the value above. Railway usually sets `PORT` for you; if it still prompts, enter that port so traffic is routed correctly. **snapshot-worker** does not listen on any port.
 
 ### 2.1 Create a Railway project and connect repo
 
@@ -90,7 +94,8 @@ Deploy **4 services** from the same repo:
 2. **Settings** → **Root Directory**: `backend/api-gateway`.
 3. **Settings** → **Build**: leave default (e.g. Nixpacks) or set **Dockerfile Path**: `Dockerfile` if you use Docker.
 4. **Settings** → **Start Command**: `node index.js` (or rely on Dockerfile `CMD`).
-5. **Variables** – add:
+5. **Settings** → **Networking** → **Port**: if it asks, enter **5000**.
+6. **Variables** – add:
 
    | Name                 | Value                                             |
    |----------------------|---------------------------------------------------|
@@ -98,9 +103,9 @@ Deploy **4 services** from the same repo:
    | `FIREBASE_PROJECT_ID`| from 1.4                                          |
    | `FIREBASE_CLIENT_EMAIL` | from 1.4                                       |
    | `FIREBASE_PRIVATE_KEY`  | from 1.4 (string, with `\n` or newlines)      |
-   | `CORS_ORIGIN`        | (optional) `https://YOUR_VERCEL_APP.vercel.app`   |
+   | `CORS_ORIGIN`        | (recommended) `https://YOUR_VERCEL_APP.vercel.app` — your exact Vercel URL, no trailing slash |
 
-6. **Settings** → **Networking** → **Generate Domain**.  
+7. **Settings** → **Networking** → **Generate Domain**.  
    Example: `https://api-gateway-xxxx.up.railway.app`
 
 **Write this URL down as:** `API_GATEWAY_URL`
@@ -111,15 +116,16 @@ Deploy **4 services** from the same repo:
 
 1. **New** → **GitHub Repo** → same repo.
 2. **Root Directory**: `backend/auth-service`.
-3. **Variables**:
+3. **Settings** → **Networking** → **Port**: if it asks, enter **8003**.
+4. **Variables**:
 
    | Name                   | Value   |
    |------------------------|---------|
    | `FIREBASE_PROJECT_ID`  | from 1.4 |
    | `FIREBASE_CLIENT_EMAIL`| from 1.4 |
-   | `FIREBASE_PRIVATE_KEY` | from 1.4 |
+   | `FIREBASE_PRIVATE_KEY` | from 1.4 | 
 
-4. **Generate Domain** (optional; only if something will call it by HTTP).
+5. **Generate Domain** (optional; only if something will call it by HTTP).
 
 ---
 
@@ -127,7 +133,8 @@ Deploy **4 services** from the same repo:
 
 1. **New** → **GitHub Repo** → same repo.
 2. **Root Directory**: `backend/collab-service`.
-3. **Variables**:
+3. **Settings** → **Networking** → **Port**: if it asks, enter **4000**.
+4. **Variables**:
 
    | Name                 | Value                                    |
    |----------------------|------------------------------------------|
@@ -140,7 +147,7 @@ Deploy **4 services** from the same repo:
    | `FIREBASE_PRIVATE_KEY`  | from 1.4                              |
    | `CORS_ORIGIN`        | (optional) `https://YOUR_VERCEL_APP.vercel.app` |
 
-4. **Generate Domain**.  
+5. **Generate Domain**.  
    Example: `https://collab-service-xxxx.up.railway.app`
 
 **Write this URL down as:** `COLLAB_URL` (you will put it in Vercel as `NEXT_PUBLIC_COLLAB_BASE`).
@@ -151,14 +158,15 @@ Deploy **4 services** from the same repo:
 
 1. **New** → **GitHub Repo** → same repo.
 2. **Root Directory**: `backend/snapshot-worker`.
-3. **Variables**:
+3. **Port**: none — this is a worker and does not listen on any port. If the UI asks for a port, leave it blank or use the default; do **not** generate a domain.
+4. **Variables**:
 
    | Name           | Value        |
    |----------------|--------------|
    | `MONGO_URL`    | from 1.1     |
    | `RABBITMQ_URL` | from 1.3     |
 
-4. No public domain needed (worker, no HTTP).
+5. No public domain needed (worker, no HTTP). Skip **Generate Domain**.
 
 ---
 
@@ -254,4 +262,4 @@ After deploy you get e.g. `https://idea-room-xxx.vercel.app`.
   These are fixed at **build** time. After changing them, trigger a new deploy (e.g. re-run Deploy or push a commit).
 
 - **Railway `PORT`:**  
-  The app uses `process.env.PORT || 5000` (or 4000/8003). Railway sets `PORT` automatically; no need to define it.
+  Railway sets `PORT` automatically; you usually don’t add it as a variable. If the UI asks for **Port** when generating a domain or in Networking, use: **5000** (api-gateway), **8003** (auth-service), **4000** (collab-service). snapshot-worker has no port.
