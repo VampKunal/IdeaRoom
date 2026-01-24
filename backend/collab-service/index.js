@@ -9,19 +9,20 @@ const { connectRabbit, publishEvent } = require("./rabbit");
 const admin = require("./firebase");
 
 const app = express();
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN, credentials: true } : { origin: "*" },
   maxHttpBufferSize: 1e7, // 10 MB
 });
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
 const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:5000";
 
-// connect infra once
-connectRabbit();
+// connect infra once (RabbitMQ and DB are async; they retry / handle on first use)
+connectRabbit().catch((err) => console.error("RabbitMQ connect failed:", err.message));
 const { connectDB, getDB } = require("./db");
 connectDB(); // async but global db var handles it
 
@@ -681,6 +682,6 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "collab-service" });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Collaboration Service running on port ${PORT}`);
 });

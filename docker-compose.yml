@@ -64,7 +64,7 @@ services:
     env_file:
       - .env
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
+      - MONGO_URL=${MONGO_URL:-mongodb://mongodb:27017}
       - NODE_ENV=production
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
       - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL:-}
@@ -104,10 +104,10 @@ services:
     env_file:
       - .env
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
-      - REDIS_URL=redis://redis:6379
-      - RABBITMQ_URL=amqp://rabbitmq
-      - API_GATEWAY_URL=http://api-gateway:5000
+      - MONGO_URL=${MONGO_URL:-mongodb://mongodb:27017}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      - API_GATEWAY_URL=${API_GATEWAY_URL:-http://api-gateway:5000}
       - NODE_ENV=production
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
       - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL:-}
@@ -130,9 +130,11 @@ services:
       context: ./backend/snapshot-worker
       dockerfile: Dockerfile
     container_name: idea-room-snapshot-worker
+    env_file:
+      - .env
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
-      - RABBITMQ_URL=amqp://rabbitmq
+      - MONGO_URL=${MONGO_URL:-mongodb://mongodb:27017}
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       - NODE_ENV=production
     depends_on:
       mongodb:
@@ -148,13 +150,22 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://localhost:5000}
+        - NEXT_PUBLIC_COLLAB_BASE=${NEXT_PUBLIC_COLLAB_BASE:-http://localhost:4000}
+        - NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+        - NEXT_PUBLIC_FIREBASE_PROJECT_ID=${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-}
+        - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        - NEXT_PUBLIC_FIREBASE_APP_ID=${NEXT_PUBLIC_FIREBASE_APP_ID:-}
     container_name: idea-room-frontend
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE=http://localhost:5000
-      - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+      - NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://localhost:5000}
+      - NEXT_PUBLIC_COLLAB_BASE=${NEXT_PUBLIC_COLLAB_BASE:-http://localhost:4000}
     depends_on:
       - api-gateway
       - collab-service

@@ -1,7 +1,8 @@
 const amqp = require("amqplib");
 const { MongoClient } = require("mongodb");
 
-const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost";
+// Railway: use AMQP_URL or RABBITMQ_URL (amqp:// or amqps://)
+const RABBITMQ_URL = process.env.RABBITMQ_URL || process.env.AMQP_URL || "amqp://localhost";
 const QUEUE = "room-events";
 const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017";
 const DB_NAME = "idea_room";

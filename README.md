@@ -87,6 +87,17 @@ idea-room/
 └── .env                       # Environment variables (create this)
 ```
 
+## ☁️ Deployment (MongoDB Atlas, Upstash, Railway, Vercel)
+
+For production with **MongoDB Atlas**, **Upstash Redis**, **Railway RabbitMQ**, **Railway (backend)**, and **Vercel (frontend)**, see **[DEPLOYMENT.md](./DEPLOYMENT.md)**. It covers:
+
+- Where to get each URL (Atlas, Upstash, Railway RabbitMQ, Firebase)
+- Step-by-step backend deploy on Railway (api-gateway, auth-service, collab-service, snapshot-worker)
+- Frontend deploy on Vercel and which variables to set
+- A **“Where to put each URL”** table and a deployment checklist
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -190,7 +201,7 @@ All backend services receive environment variables from:
 
 **Frontend:**
 - `NEXT_PUBLIC_API_BASE`: API Gateway URL (default: `http://localhost:5000`)
-- `NEXT_PUBLIC_SOCKET_URL`: Socket.IO server URL (default: `http://localhost:4000`)
+- `NEXT_PUBLIC_COLLAB_BASE`: Collab/Socket.IO server URL (default: `http://localhost:4000`)
 - `NODE_ENV`: Environment mode
 
 ## 📝 How Environment Variables Work

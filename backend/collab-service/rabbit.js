@@ -2,7 +2,8 @@ const amqp = require("amqplib");
 
 let channel;
 
-const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost";
+// Railway: use AMQP_URL or RABBITMQ_URL (amqp:// or amqps:// for TLS)
+const RABBITMQ_URL = process.env.RABBITMQ_URL || process.env.AMQP_URL || "amqp://localhost";
 
 async function connectRabbit() {
   const connection = await amqp.connect(RABBITMQ_URL);

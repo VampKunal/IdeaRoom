@@ -1,0 +1,90 @@
+# Use with: docker-compose -f docker-compose.cloud.yml up
+#
+# For MongoDB Atlas, Upstash Redis, Railway RabbitMQ.
+# Set in .env: MONGO_URL, REDIS_URL, RABBITMQ_URL (and FIREBASE_*, NEXT_PUBLIC_*).
+# Do not use this if you want to run mongo/redis/rabbit locally; use docker-compose.yml instead.
+
+version: "3.8"
+
+services:
+  api-gateway:
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: idea-room-api-gateway
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=${MONGO_URL}
+      - NODE_ENV=production
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    container_name: idea-room-auth-service
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+
+  collab-service:
+    build:
+      context: ./backend/collab-service
+      dockerfile: Dockerfile
+    container_name: idea-room-collab-service
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=${MONGO_URL}
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - API_GATEWAY_URL=${API_GATEWAY_URL:-http://api-gateway:5000}
+      - NODE_ENV=production
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  snapshot-worker:
+    build:
+      context: ./backend/snapshot-worker
+      dockerfile: Dockerfile
+    container_name: idea-room-snapshot-worker
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=${MONGO_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - NODE_ENV=production
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://localhost:5000}
+        - NEXT_PUBLIC_COLLAB_BASE=${NEXT_PUBLIC_COLLAB_BASE:-http://localhost:4000}
+        - NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+        - NEXT_PUBLIC_FIREBASE_PROJECT_ID=${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-}
+        - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        - NEXT_PUBLIC_FIREBASE_APP_ID=${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+    container_name: idea-room-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - api-gateway
+      - collab-service
+    restart: unless-stopped
