@@ -95,6 +95,29 @@ io.on("connection", (socket) => {
     return defaultValue;
   }
 
+  // Helper function to save state to MongoDB immediately (non-blocking)
+  async function saveStateToMongoDB(roomId, state) {
+    try {
+      const db = getDB();
+      if (!db) {
+        console.warn(`[PERSIST] MongoDB not ready, skipping save for room ${roomId}`);
+        return;
+      }
+      await db.collection("room_states").updateOne(
+        { _id: roomId },
+        { $set: { objects: state.objects, updatedAt: new Date() } },
+        { upsert: true }
+      );
+      // Only log occasionally to avoid spam (every 10th save or so)
+      if (Math.random() < 0.1) {
+        console.log(`[PERSIST] Saved room ${roomId} to MongoDB.`);
+      }
+    } catch (error) {
+      console.error(`[PERSIST] Failed to save room ${roomId} to MongoDB:`, error.message);
+      // Don't throw - Redis is the source of truth, MongoDB is backup
+    }
+  }
+
   /* ---------------- JOIN ROOM ---------------- */
   socket.on("join-room", async (roomId) => {
     try {
@@ -280,6 +303,8 @@ io.on("connection", (socket) => {
 
       if (changed) {
         await redisClient.set(key, JSON.stringify(state));
+        // Save to MongoDB immediately (non-blocking)
+        saveStateToMongoDB(roomId, state).catch(() => {});
         // Broadcast to everyone (including sender, or just others? efficiently sender knows, but consistency is good)
         // Usually sender updates optimistically.
         socket.to(roomId).emit("room-state", state);
@@ -328,6 +353,8 @@ io.on("connection", (socket) => {
 
     // persist state including history
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
 
     publishEvent({
       roomId,
@@ -364,6 +391,8 @@ io.on("connection", (socket) => {
     );
 
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
 
     publishEvent({
       roomId,
@@ -402,6 +431,8 @@ io.on("connection", (socket) => {
     });
 
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
     io.to(roomId).emit("room-state", state); // Full refresh is easiest for reorder
   });
 
@@ -432,6 +463,8 @@ io.on("connection", (socket) => {
     );
 
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
 
     publishEvent({
       roomId,
@@ -466,6 +499,8 @@ io.on("connection", (socket) => {
 
 
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
 
     // notify everyone
     io.to(roomId).emit("object-deleted", { objectId });
@@ -575,6 +610,8 @@ io.on("connection", (socket) => {
 
     state.objects = newOrder;
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
     io.to(roomId).emit("room-state", state);
   });
 
@@ -692,6 +729,8 @@ io.on("connection", (socket) => {
     }
 
     await redisClient.set(key, JSON.stringify(state));
+    // Save to MongoDB immediately (non-blocking)
+    saveStateToMongoDB(roomId, state).catch(() => {});
     io.to(roomId).emit("room-state", state);
   });
 
