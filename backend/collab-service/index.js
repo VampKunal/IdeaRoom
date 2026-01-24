@@ -69,20 +69,30 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id} (${socket.user?.email})`);
 
-  // Helper function for safe JSON parsing
-  function safeParseJSON(str, defaultValue = { objects: [] }) {
-    if (!str) return defaultValue;
-    try {
-      const parsed = JSON.parse(str);
-      // Ensure objects array exists
-      if (!parsed.objects || !Array.isArray(parsed.objects)) {
-        parsed.objects = [];
+  // Helper function for safe JSON parsing (handles strings and objects)
+  function safeParseJSON(strOrObj, defaultValue = { objects: [] }) {
+    if (!strOrObj) return defaultValue;
+    // If already an object, use it directly
+    if (typeof strOrObj === "object" && strOrObj !== null) {
+      if (!strOrObj.objects || !Array.isArray(strOrObj.objects)) {
+        strOrObj.objects = [];
       }
-      return parsed;
-    } catch (error) {
-      console.error("JSON parse error:", error);
-      return defaultValue;
+      return strOrObj;
     }
+    // If string, parse it
+    if (typeof strOrObj === "string") {
+      try {
+        const parsed = JSON.parse(strOrObj);
+        if (!parsed.objects || !Array.isArray(parsed.objects)) {
+          parsed.objects = [];
+        }
+        return parsed;
+      } catch (error) {
+        console.error("JSON parse error:", error);
+        return defaultValue;
+      }
+    }
+    return defaultValue;
   }
 
   /* ---------------- JOIN ROOM ---------------- */
@@ -121,7 +131,7 @@ io.on("connection", (socket) => {
       await redisClient.hSet(participantsKey, socket.id, JSON.stringify(userProfile));
 
       const allParticipantsRaw = await redisClient.hVals(participantsKey);
-      const allParticipants = allParticipantsRaw.map(p => JSON.parse(p));
+      const allParticipants = allParticipantsRaw.map(p => typeof p === "string" ? JSON.parse(p) : p);
 
       // Deduplicate users for the list
       // We use a Map to keep unique users (by uid)
@@ -151,7 +161,7 @@ io.on("connection", (socket) => {
 
           // Re-calculate state
           const remainingRaw = await redisClient.hVals(participantsKey);
-          const remainingAll = remainingRaw.map(p => JSON.parse(p));
+          const remainingAll = remainingRaw.map(p => typeof p === "string" ? JSON.parse(p) : p);
 
           const remainingUniqueMap = new Map();
           remainingAll.forEach(u => remainingUniqueMap.set(u.uid, u));
@@ -168,7 +178,7 @@ io.on("connection", (socket) => {
             const key = `room:${roomId}:state`;
             const stateRaw = await redisClient.get(key);
             if (stateRaw) {
-              const state = JSON.parse(stateRaw);
+              const state = safeParseJSON(stateRaw);
               const db = getDB();
               await db.collection("room_states").updateOne(
                 { _id: roomId },
@@ -213,7 +223,7 @@ io.on("connection", (socket) => {
       let ownerSocketId = null;
 
       for (const [sid, profileStr] of Object.entries(allSockets)) {
-        const p = JSON.parse(profileStr);
+        const p = typeof profileStr === "string" ? JSON.parse(profileStr) : profileStr;
         if (p.uid === ownerId) {
           ownerSocketId = sid;
           break;

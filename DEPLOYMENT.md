@@ -41,7 +41,7 @@ Use **MongoDB Atlas**, **Upstash Redis**, **Railway RabbitMQ**, **Railway (backe
 
 1. In [Railway](https://railway.app): **New Project** → **Add Plugin** → **RabbitMQ** (or add from a template).
 2. Open the RabbitMQ service → **Variables** or **Connect**.
-3. Copy `AMQP_URL` or `RABBITMQ_URL` (or the full connection string shown):
+3. Copy `AMQP_URL` or `RABBITMQ_URL` (or the full connection string shown). **Important:** Use the **public/external URL**, not an internal hostname like `rabbitmq.railway.internal`. The URL should look like:
    ```
    amqps://user:pass@host/vhost
    ```
@@ -49,6 +49,7 @@ Use **MongoDB Atlas**, **Upstash Redis**, **Railway RabbitMQ**, **Railway (backe
    ```
    amqp://user:pass@host:5672
    ```
+   If you see `rabbitmq.railway.internal` or similar, look for the **public AMQP URL** in the RabbitMQ plugin's **Connect** or **Variables** section.
 
 **Save as:** `RABBITMQ_URL` (or `AMQP_URL`; the app uses `RABBITMQ_URL` first, then `AMQP_URL`).
 
@@ -140,7 +141,7 @@ When Railway asks for **Port** (in Settings → Networking or when adding a doma
    | Name                 | Value                                    |
    |----------------------|------------------------------------------|
    | `MONGO_URL`          | from 1.1                                 |
-   | `REDIS_URL`          | from 1.2 (Upstash `rediss://...`)        |
+   | `REDIS_URL`          | from 1.2 (Upstash TCP `rediss://...`). Or use **REST** (avoids "Socket closed unexpectedly"): `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` from Upstash console → your DB → REST API | 
    | `RABBITMQ_URL`       | from 1.3 (or `AMQP_URL`)                 |
    | `API_GATEWAY_URL`    | `https://api-gateway-xxxx.up.railway.app` (from 2.2) |
    | `FIREBASE_PROJECT_ID`| from 1.4                                 |
@@ -254,11 +255,11 @@ After deploy you get e.g. `https://idea-room-xxx.vercel.app`.
 - **MongoDB:**  
   Ensure Atlas Network Access allows `0.0.0.0/0` or Railway IPs, and the user has read/write on the DB.
 
-- **Redis:**  
-  Use `rediss://` for Upstash. If you see connection errors, check the Redis URL and region.
+- **Redis / "Socket closed unexpectedly" / "Client is closed":**  
+  Use `rediss://` for Upstash TCP. If you see **"Socket closed unexpectedly"**, **"Redis max retries"**, or **"Client is closed"**, switch to **Upstash REST**: In Upstash console → your DB → **REST API**, copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. In Railway → collab-service Variables, add both and **remove or leave** `REDIS_URL`; the app uses REST when both REST vars are set. REST uses HTTP (no persistent socket), so it avoids these TCP issues.
 
-- **RabbitMQ:**  
-  `amqplib` supports `amqps://`. If Railway gives `AMQP_URL`, you can set `RABBITMQ_URL` to the same value.
+- **RabbitMQ / "getaddrinfo ENOTFOUND rabbitmq.railway.internal":**  
+  Use the **public AMQP URL** from Railway's RabbitMQ plugin (in **Variables** or **Connect**), not an internal hostname. The URL should start with `amqp://` or `amqps://` and have a real domain (e.g. `amqps://user:pass@vulture.rmq.cloudamqp.com/vhost`). If you see `rabbitmq.railway.internal`, that's an internal-only hostname and won't work from your services. `amqplib` supports both `amqp://` and `amqps://` (TLS).
 
 - **`NEXT_PUBLIC_*` on Vercel:**  
   These are fixed at **build** time. After changing them, trigger a new deploy (e.g. re-run Deploy or push a commit).

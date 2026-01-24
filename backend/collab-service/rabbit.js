@@ -6,10 +6,16 @@ let channel;
 const RABBITMQ_URL = process.env.RABBITMQ_URL || process.env.AMQP_URL || "amqp://localhost";
 
 async function connectRabbit() {
-  const connection = await amqp.connect(RABBITMQ_URL);
-  channel = await connection.createChannel();
-  await channel.assertQueue("room-events", { durable: true });
-  console.log("RabbitMQ connected");
+  try {
+    const connection = await amqp.connect(RABBITMQ_URL);
+    channel = await connection.createChannel();
+    await channel.assertQueue("room-events", { durable: true });
+    console.log("RabbitMQ connected");
+  } catch (err) {
+    console.error("RabbitMQ connect failed:", err.message);
+    // Don't throw - app continues without RabbitMQ (events just won't be published)
+    channel = null;
+  }
 }
 
 function publishEvent(event) {
