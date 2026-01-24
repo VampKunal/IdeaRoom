@@ -248,7 +248,8 @@ After deploy you get e.g. `https://idea-room-xxx.vercel.app`.
 ## 8. Troubleshooting
 
 - **CORS / Socket.IO:**  
-  Set `CORS_ORIGIN` on **api-gateway** and **collab-service** to your Vercel URL (e.g. `https://idea-room-ashy.vercel.app`), **no trailing slash**. For production + preview use comma-separated: `https://idea-room-ashy.vercel.app,https://idea-room-xxx.vercel.app`. All three (api-gateway, collab-service, auth-service) use the same CORS logic; collab needs it for Socket.IO, api-gateway for `/room` and `/room/my`.
+  Set `CORS_ORIGIN` on **api-gateway** and **collab-service** to your Vercel URL (e.g. `https://idea-room-ashy.vercel.app`), **no trailing slash**. For production + preview use comma-separated: `https://idea-room-ashy.vercel.app,https://idea-room-xxx.vercel.app`.  
+  If preflight still fails with "No 'Access-Control-Allow-Origin' header": (1) **Remove `CORS_ORIGIN`** from api-gateway in Railway so the app allows any origin; if that fixes it, the value was wrong (typo, slash, space). (2) In Railway → api-gateway → **Settings → Networking**, ensure the service **port** matches what the app uses (default 5000; Railway usually sets `PORT` for you). (3) Check **Deployments → Logs**: the app must log "API Gateway running on port X" and must not crash on startup; if MongoDB fails, the app now starts anyway and `/room` returns 503 until DB is ready.
 
 - **MongoDB:**  
   Ensure Atlas Network Access allows `0.0.0.0/0` or Railway IPs, and the user has read/write on the DB.

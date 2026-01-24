@@ -16,8 +16,12 @@ async function connectDB() {
         return db;
     } catch (e) {
         console.error("MongoDB Connection Error:", e);
-        process.exit(1);
+        throw e;
     }
+}
+
+function isDBReady() {
+    return db !== null;
 }
 
 function getDB() {
@@ -27,4 +31,4 @@ function getDB() {
     return db;
 }
 
-module.exports = { connectDB, getDB };
+module.exports = { connectDB, getDB, isDBReady };
