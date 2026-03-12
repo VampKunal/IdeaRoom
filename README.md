@@ -384,14 +384,9 @@ docker-compose down -v
 - **Group Operations**: Move, resize, delete multiple objects
 - **Undo/Redo**: Full history tracking
 
-## 📄 License
 
-[Add your license here]
 
 ## 🤝 Contributing
 
-[Add contribution guidelines here]
+Anybody is free to contribute
 
-## 📧 Support
-
-[Add support contact information here]
