@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { getRoom } from "../../lib/api";
 import { connectSocket, getSocket } from "../../lib/socket";
 import html2canvas from "html2canvas";
+import RoomChat from "../../../components/RoomChat";
 import { useAuth } from "../../../context/AuthContext";
 import { useRouter } from "next/navigation";
 
@@ -837,22 +838,68 @@ export default function RoomPage({ params }) {
   }
 
 
+  function detectShapeHeuristic(points, color, width) {
+    if (points.length < 15) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    points.forEach(p => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+
+    const w = maxX - minX;
+    const h = maxY - minY;
+    if (w < 20 || h < 20) return null;
+
+    const start = points[0];
+    const end = points[points.length - 1];
+    const closureDist = Math.hypot(start.x - end.x, start.y - end.y);
+    const boundsDiag = Math.hypot(w, h);
+    
+    // Closed loops -> circle or rect
+    if (closureDist < boundsDiag * 0.3) {
+      const ratio = w / h;
+      if (ratio > 0.75 && ratio < 1.35) {
+         return {
+           type: "SHAPE", x: minX, y: minY,
+           data: { shape: "circle", radius: Math.max(w, h)/2, color },
+           strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
+         };
+      } else {
+         return {
+           type: "SHAPE", x: minX, y: minY,
+           data: { shape: "rect", width: w, height: h, color },
+           strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
+         };
+      }
+    }
+    return null;
+  }
+
   function onDrawMouseUp() {
     if (!isDrawing || !currentStroke) return;
 
-    const stroke = {
+    let finalObject = {
       ...currentStroke,
       points: [...currentStroke.points], // 🔒 freeze
     };
 
+    if (tool === "draw") {
+      const detected = detectShapeHeuristic(finalObject.points, finalObject.color, finalObject.width);
+      if (detected) {
+         finalObject = { id: finalObject.id, ...detected };
+      }
+    }
+
     setObjects((prev) => {
-      if (prev.some((o) => o.id === stroke.id)) return prev;
-      return [...prev, stroke];
+      if (prev.some((o) => o.id === finalObject.id)) return prev;
+      return [...prev, finalObject];
     });
 
     connectSocket().emit("object-create", {
       roomId,
-      object: stroke,
+      object: finalObject,
     });
 
     setIsDrawing(false);
@@ -1557,6 +1604,7 @@ export default function RoomPage({ params }) {
 
         {/* OBJECTS VIEWPORT */}
         <div
+          id="whiteboard-container"
           style={{
             position: "absolute",
             width: "100%",
@@ -1693,9 +1741,10 @@ export default function RoomPage({ params }) {
                 const isTriangle = obj.data.shape === "triangle";
                 const isDiamond = obj.data.shape === "diamond";
 
-                let clipPath = undefined;
-                if (isTriangle) clipPath = "polygon(50% 0%, 0% 100%, 100% 100%)";
-                if (isDiamond) clipPath = "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)";
+                const w = isCircle ? obj.data.radius * 2 : obj.data.width;
+                const h = isCircle ? obj.data.radius * 2 : obj.data.height;
+                const borderColor = obj.data.color || obj.color || "#ffffff";
+                const finalBorderWidth = obj.strokeWidth || 3;
 
                 return (
                   <div
@@ -1705,21 +1754,32 @@ export default function RoomPage({ params }) {
                       position: "absolute",
                       left: obj.x,
                       top: obj.y,
-                      width: isCircle ? obj.data.radius * 2 : obj.data.width,
-                      height: isCircle ? obj.data.radius * 2 : obj.data.height,
-                      background: obj.data.color,
-                      clipPath: clipPath,
-                      // Style Props
+                      width: w,
+                      height: h,
                       opacity: obj.opacity || 1,
-                      borderRadius: isCircle ? "50%" : (obj.borderRadius || 0),
-                      borderWidth: (isTriangle || isDiamond) ? 0 : (obj.strokeWidth || 0),
-                      borderStyle: obj.strokeStyle || "none",
-                      borderColor: obj.strokeStyle !== "none" ? (obj.color || "#ffffff") : "transparent",
                       outline: selected ? "2px solid #1971c2" : "none",
                       cursor: "grab",
                       pointerEvents: "auto",
+                      background: "transparent",
+                      borderWidth: (isTriangle || isDiamond) ? 0 : finalBorderWidth,
+                      borderStyle: "solid",
+                      borderColor: borderColor,
+                      borderRadius: isCircle ? "50%" : (obj.borderRadius || 0),
                     }}
-                  />
+                  >
+                    {(isTriangle || isDiamond) && (
+                      <svg width="100%" height="100%" style={{ overflow: "visible" }}>
+                        <polygon
+                          points={isTriangle ? "50,0 0,100 100,100" : "50,0 100,50 50,100 0,50"}
+                          fill="none"
+                          stroke={borderColor}
+                          strokeWidth={finalBorderWidth}
+                          strokeLinejoin="round"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </svg>
+                    )}
+                  </div>
                 );
               }
 
@@ -1890,6 +1950,9 @@ export default function RoomPage({ params }) {
 
       {/* MINIMAP */}
       <Minimap objects={objects} viewport={{ x: -pan.x, y: -pan.y, width: typeof window !== 'undefined' ? window.innerWidth : 800, height: typeof window !== 'undefined' ? window.innerHeight : 600, zoom }} />
+      
+      {/* AI CHAT */}
+      <RoomChat roomId={roomId} user={user} />
     </main>
   );
 }
@@ -1904,8 +1967,8 @@ function Minimap({ objects, viewport }) {
 
   // Filter valid objects to prevent NaN
   const validObjects = objects.filter(o =>
-    typeof o.x === 'number' && !isNaN(o.x) &&
-    typeof o.y === 'number' && !isNaN(o.y)
+    (typeof o.x === 'number' && !isNaN(o.x) && typeof o.y === 'number' && !isNaN(o.y)) ||
+    (o.type === 'STROKE' && Array.isArray(o.points) && o.points.length > 0)
   );
 
   // Bounds of all objects

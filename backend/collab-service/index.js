@@ -6,8 +6,11 @@ const cors = require("cors");
 
 const redisClient = require("./redis");
 const { connectRabbit, publishEvent } = require("./rabbit");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const admin = require("./firebase");
+
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
 // CORS: same logic as api-gateway. Comma-separated CORS_ORIGIN; trim and drop trailing slash.
 const corsOrigins = process.env.CORS_ORIGIN
@@ -103,9 +106,14 @@ io.on("connection", (socket) => {
         console.warn(`[PERSIST] MongoDB not ready, skipping save for room ${roomId}`);
         return;
       }
+      
+      const chatKey = `room:${roomId}:chat`;
+      const histRaw = await redisClient.lRange(chatKey, 0, -1);
+      const chatHistory = histRaw.map(msg => JSON.parse(msg));
+
       await db.collection("room_states").updateOne(
         { _id: roomId },
-        { $set: { objects: state.objects, updatedAt: new Date() } },
+        { $set: { objects: state.objects, chat: chatHistory, updatedAt: new Date() } },
         { upsert: true }
       );
       // Only log occasionally to avoid spam (every 10th save or so)
@@ -135,12 +143,23 @@ io.on("connection", (socket) => {
         // Try loading from MongoDB (Long-term persistence)
         const db = getDB();
         const savedState = await db.collection("room_states").findOne({ _id: roomId });
-        if (savedState && savedState.objects) {
-          // Enrich state into proper format
-          const loadedState = { objects: savedState.objects, history: { undo: [], redo: [] } };
-          // Save to Redis (Hot Cache)
-          await redisClient.set(key, JSON.stringify(loadedState));
-          socket.emit("room-state", loadedState);
+        if (savedState) {
+          if (savedState.objects) {
+            // Enrich state into proper format
+            const loadedState = { objects: savedState.objects, history: { undo: [], redo: [] } };
+            // Save to Redis (Hot Cache)
+            await redisClient.set(key, JSON.stringify(loadedState));
+            socket.emit("room-state", loadedState);
+          }
+          if (savedState.chat && savedState.chat.length > 0) {
+            const chatKey = `room:${roomId}:chat`;
+            const exists = await redisClient.exists(chatKey);
+            if (!exists) {
+              for (const msg of savedState.chat) {
+                await redisClient.rPush(chatKey, JSON.stringify(msg));
+              }
+            }
+          }
           console.log(`[PERSIST] Loaded room ${roomId} from MongoDB.`);
         }
       }
@@ -732,6 +751,139 @@ io.on("connection", (socket) => {
     // Save to MongoDB immediately (non-blocking)
     saveStateToMongoDB(roomId, state).catch(() => {});
     io.to(roomId).emit("room-state", state);
+  });
+
+  /* ---------------- CHAT & AI ---------------- */
+  socket.on("get_chat_history", async ({ roomId }) => {
+    try {
+      const chatKey = `room:${roomId}:chat`;
+      const histRaw = await redisClient.lRange(chatKey, 0, -1);
+      const history = histRaw.map(msg => JSON.parse(msg));
+      socket.emit("chat_history", history);
+    } catch (e) {
+      console.error("Error getting chat:", e);
+    }
+  });
+
+  socket.on("send_chat", async ({ roomId, message }) => {
+    try {
+      const chatKey = `room:${roomId}:chat`;
+      
+      const imageContext = message.imageContext;
+      const cleanMessage = { ...message };
+      delete cleanMessage.imageContext;
+
+      await redisClient.rPush(chatKey, JSON.stringify(cleanMessage));
+      await redisClient.lTrim(chatKey, -100, -1); // limit to 100
+      
+      io.to(roomId).emit("chat_message", cleanMessage);
+
+      if (cleanMessage.text.trim().toLowerCase().startsWith("@ai")) {
+        if (!genAI) {
+          io.to(roomId).emit("chat_message", {
+            id: crypto.randomUUID(),
+            userId: "AI",
+            userName: "AI Assistant",
+            text: "I'm offline right now. Add GEMINI_API_KEY to your backend .env to awaken me!",
+            timestamp: Date.now()
+          });
+          return;
+        }
+
+        const promptText = cleanMessage.text.replace(/@ai/i, "").trim();
+        const stateRaw = await redisClient.get(`room:${roomId}:state`);
+        let context = "The whiteboard is empty.";
+        
+        if (stateRaw) {
+          const state = safeParseJSON(stateRaw);
+          const summaries = state.objects.map(o => {
+            if (o.type === "TEXT") return `Text: "${o.data?.text}" at X:${Math.round(o.x)}, Y:${Math.round(o.y)}`;
+            if (o.type === "NODE") return `Sticky Note: "${o.data?.label}" at X:${Math.round(o.x)}, Y:${Math.round(o.y)}`;
+            if (o.type === "SHAPE") return `${o.data?.shape} shape at X:${Math.round(o.x)}, Y:${Math.round(o.y)}`;
+            if (o.type === "STROKE") return `Freehand drawing stroke (${o.points?.length || 0} points)`;
+            if (o.type === "IMAGE") return `Uploaded Image at X:${Math.round(o.x)}, Y:${Math.round(o.y)}`;
+            return `Object ${o.type}`;
+          });
+          if (summaries.length > 0) {
+            context = "This is a detailed list of all geometric and text components currently on the whiteboard:\n" + summaries.join("\n");
+          }
+        }
+
+        const isAnalysis = /summarize|analyze|explain|comprehend|break down|detailed|see|look/i.test(promptText);
+        const selectedModel = isAnalysis ? "gemini-2.5-pro" : "gemini-2.5-flash";
+        const model = genAI.getGenerativeModel({ model: selectedModel });
+        
+        const reqParts = [];
+        const systemPrompt = `You are a helpful AI Assistant in a collaborative whiteboard room. User asked: "${promptText}".\n\n${context}\n\nIf the user asks you to generate a diagram, drawing, flowchart, or board structure, you must output a friendly message AND a markdown JSON block containing an array of objects mimicking the whiteboard data schema. Example schema:\n\`\`\`json\n[\n  { "type": "SHAPE", "x": 100, "y": 100, "data": { "shape": "rect", "width": 200, "height": 100, "color": "#D0EBFF" }, "strokeWidth": 2, "strokeStyle": "solid" },\n  { "type": "TEXT", "x": 120, "y": 120, "data": { "text": "Start Here", "width": 160, "height": 30 }, "color": "#ffffff", "fontSize": 16 }\n]\n\`\`\`\nOtherwise, provide a very concise, helpful answer without using markdown unless absolutely necessary.`;
+        reqParts.push({ text: systemPrompt });
+        
+        if (imageContext) {
+          reqParts.push({
+            inlineData: {
+              data: imageContext,
+              mimeType: "image/jpeg"
+            }
+          });
+        }
+        
+        let result;
+        try {
+          result = await model.generateContent(reqParts);
+        } catch (modelErr) {
+          console.log(`[AI] ${selectedModel} failed (${modelErr.message}). Falling back to 1.5...`);
+          const fallbackModel = genAI.getGenerativeModel({ model: selectedModel.replace("2.5", "1.5") });
+          result = await fallbackModel.generateContent(reqParts);
+        }
+        
+        let aiResponse = result.response.text();
+
+        const jsonMatch = aiResponse.match(/```json([\s\S]*?)```/);
+        if (jsonMatch) {
+          try {
+            const parsedArray = JSON.parse(jsonMatch[1]);
+            const state = stateRaw ? safeParseJSON(stateRaw) : { objects: [], roomId };
+            
+            parsedArray.forEach(obj => {
+              obj.id = crypto.randomUUID();
+              obj.updatedAt = Date.now();
+              state.objects.push(obj);
+            });
+
+            await redisClient.set(`room:${roomId}:state`, JSON.stringify(state));
+            io.to(roomId).emit("room-state", state);
+            
+            aiResponse = aiResponse.replace(jsonMatch[0], "").trim();
+            if (!aiResponse) aiResponse = "I've placed the requested items on the whiteboard!";
+          } catch (err) {
+            console.error("AI JSON Parse Error:", err);
+          }
+        }
+
+        const aiMsg = {
+          id: crypto.randomUUID(),
+          userId: "AI",
+          userName: "AI Assistant",
+          text: aiResponse.trim(),
+          timestamp: Date.now()
+        };
+
+        await redisClient.rPush(chatKey, JSON.stringify(aiMsg));
+        await redisClient.lTrim(chatKey, -100, -1);
+        io.to(roomId).emit("chat_message", aiMsg);
+        
+        // Non-blocking trigger to save chat to mongo
+        saveStateToMongoDB(roomId, safeParseJSON(stateRaw)).catch(() => {});
+      }
+    } catch (e) {
+      console.error("AI/Chat Error:", e);
+      io.to(roomId).emit("chat_message", {
+        id: crypto.randomUUID(),
+        userId: "AI",
+        userName: "AI Assistant",
+        text: "I ran into a server error processing your request.",
+        timestamp: Date.now()
+      });
+    }
   });
 
   /* ---------------- DISCONNECT ---------------- */
