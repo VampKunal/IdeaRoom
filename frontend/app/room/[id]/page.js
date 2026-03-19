@@ -36,6 +36,21 @@ function RoughShape({ shape, width, height, color, strokeWidth, bgStyle = "hachu
       node = rc.polygon([[w/2, 0], [0, h], [w, h]], options);
     } else if (shape === "diamond") {
       node = rc.polygon([[w/2, 0], [w, h/2], [w/2, h], [0, h/2]], options);
+    } else if (shape === "parallelogram") {
+      node = rc.polygon([[w*0.25, 0], [w, 0], [w*0.75, h], [0, h]], options);
+    } else if (shape === "hexagon") {
+      node = rc.polygon([[w*0.25, 0], [w*0.75, 0], [w, h/2], [w*0.75, h], [w*0.25, h], [0, h/2]], options);
+    } else if (shape === "cloud") {
+      // Simplified cloud-like path (hand-drawn approximation)
+      const path = `M ${w*0.2} ${h*0.7} 
+                    Q ${w*0.05} ${h*0.7} ${w*0.1} ${h*0.5}
+                    Q ${w*0.05} ${h*0.2} ${w*0.3} ${h*0.2}
+                    Q ${w*0.4} ${h*0.05} ${w*0.6} ${h*0.1}
+                    Q ${w*0.8} ${h*0.05} ${w*0.9} ${h*0.3}
+                    Q ${w*1.0} ${h*0.6} ${w*0.8} ${h*0.7}
+                    Q ${w*0.8} ${h*0.95} ${w*0.5} ${h*0.9}
+                    Q ${w*0.25} ${h*0.95} ${w*0.2} ${h*0.7} Z`;
+      node = rc.path(path, options);
     }
     if (node) {
       containerRef.current.appendChild(node);
@@ -129,7 +144,7 @@ import {
   MousePointer2, Hand, Pencil, Eraser, Undo, Redo,
   Type, Square, Circle, Triangle, Diamond, Share2,
   Minus, Plus, Download, Settings, Layers, Trash2,
-  Image as ImageIcon, ChevronDown, ChevronUp
+  Image as ImageIcon, ChevronDown, ChevronUp, ArrowRight, Hexagon, Cloud, Boxes
 } from "lucide-react";
 import {
   Button, Tooltip, Dropdown, DropdownTrigger,
@@ -440,6 +455,18 @@ export default function RoomPage({ params }) {
   function onMouseDown(e, obj) {
     if (!hasJoined) return;
     if (resizingId || tool === "pan") return;
+
+    if (tool === "edge") {
+      e.stopPropagation();
+      if (!edgeStart) {
+        setEdgeStart(obj.id);
+      } else if (edgeStart !== obj.id) {
+        createEdge(edgeStart, obj.id);
+        setEdgeStart(null);
+        setTool("select");
+      }
+      return;
+    }
 
     handleSelect(e, obj.id);
 
@@ -884,7 +911,13 @@ export default function RoomPage({ params }) {
               ? { shape: "circle", radius: 50, color: color || "#FFD8A8" }
               : shape === "triangle"
                 ? { shape: "triangle", width: 100, height: 100, color: color || "#B2F2BB" }
-                : { shape: "diamond", width: 100, height: 100, color: color || "#FFEC99" },
+                : shape === "diamond"
+                  ? { shape: "diamond", width: 100, height: 100, color: color || "#FFEC99" }
+                  : shape === "parallelogram"
+                    ? { shape: "parallelogram", width: 140, height: 80, color: color || "#D0EBFF" }
+                    : shape === "hexagon"
+                      ? { shape: "hexagon", width: 120, height: 100, color: color || "#E5DBFF" }
+                      : { shape: "cloud", width: 150, height: 100, color: color || "#F1F3F5" },
       },
     });
   }
@@ -1242,7 +1275,7 @@ export default function RoomPage({ params }) {
 
 
   const nodeMap = Object.fromEntries(
-    objects.filter((o) => o.type === "NODE").map((n) => [n.id, n])
+    objects.map((n) => [n.id, n])
   );
 
 
@@ -1325,6 +1358,12 @@ export default function RoomPage({ params }) {
           <ToolBtn icon={Square} active={false} onClick={() => addShape("rect")} label="Rectangle" />
           <ToolBtn icon={Circle} active={false} onClick={() => addShape("circle")} label="Circle" />
           <ToolBtn icon={Triangle} active={false} onClick={() => addShape("triangle")} label="Triangle" />
+          <ToolBtn icon={Diamond} active={false} onClick={() => addShape("diamond")} label="Diamond" />
+          <ToolBtn icon={Boxes} active={false} onClick={() => addShape("parallelogram")} label="Data (Parallelogram)" />
+          <ToolBtn icon={Hexagon} active={false} onClick={() => addShape("hexagon")} label="Hexagon" />
+          <ToolBtn icon={Cloud} active={false} onClick={() => addShape("cloud")} label="Cloud" />
+          <div className="w-px h-8 bg-white/10 mx-2"></div>
+          <ToolBtn icon={ArrowRight} active={tool === "edge"} onClick={() => { setTool("edge"); setEdgeStart(null); }} label="Arrow / Edge" />
           <ToolBtn icon={Type} active={false} onClick={addText} label="Text" />
           <ToolBtn icon={ImageIcon} active={false} onClick={() => document.getElementById('img-upload')?.click()} label="Image" />
           <input id="img-upload" type="file" accept="image/*" className="hidden" onChange={(e) => {
@@ -1644,10 +1683,13 @@ export default function RoomPage({ params }) {
                 const to = nodeMap[edge.data.to];
                 if (!from || !to) return null;
 
-                const fromX = from.x + (from.data.width || 120) / 2;
-                const fromY = from.y + (from.data.height || 40) / 2;
-                const toX = to.x + (to.data.width || 120) / 2;
-                const toY = to.y + (to.data.height || 40) / 2;
+                const fromBounds = getObjectBounds(from);
+                const toBounds = getObjectBounds(to);
+
+                const fromX = fromBounds.x + fromBounds.width / 2;
+                const fromY = fromBounds.y + fromBounds.height / 2;
+                const toX = toBounds.x + toBounds.width / 2;
+                const toY = toBounds.y + toBounds.height / 2;
 
                 return (
                   <RoughEdge 
@@ -1766,14 +1808,7 @@ export default function RoomPage({ params }) {
                   <div
                     key={obj.id}
                     onMouseDown={(e) => onMouseDown(e, obj)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!edgeStart) setEdgeStart(obj.id);
-                      else if (edgeStart !== obj.id) {
-                        createEdge(edgeStart, obj.id);
-                        setEdgeStart(null);
-                      }
-                    }}
+                    onClick={(e) => e.stopPropagation()}
                     style={{
                       position: "absolute",
                       left: obj.x,
