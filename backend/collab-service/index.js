@@ -814,7 +814,7 @@ io.on("connection", (socket) => {
         const model = genAI.getGenerativeModel({ model: selectedModel });
         
         const reqParts = [];
-        const systemPrompt = `You are a helpful AI Assistant in a collaborative whiteboard room. User asked: "${promptText}".\n\n${context}\n\nIf the user asks you to generate a diagram, drawing, flowchart, or board structure, you must output a friendly message AND a markdown JSON block containing an array of objects mimicking the whiteboard data schema. Example schema:\n\`\`\`json\n[\n  { "type": "SHAPE", "x": 100, "y": 100, "data": { "shape": "rect", "width": 200, "height": 100, "color": "#D0EBFF" }, "strokeWidth": 2, "strokeStyle": "solid" },\n  { "type": "TEXT", "x": 120, "y": 120, "data": { "text": "Start Here", "width": 160, "height": 30 }, "color": "#ffffff", "fontSize": 16 }\n]\n\`\`\`\nOtherwise, provide a very concise, helpful answer without using markdown unless absolutely necessary.`;
+        const systemPrompt = `You are a helpful AI Assistant in a collaborative whiteboard room. User asked: "${promptText}".\n\n${context}\n\nIf the user asks you to generate a diagram, drawing, flowchart, UML, or board structure, you must output a friendly message AND a markdown JSON block containing an array of objects mimicking the whiteboard data schema. Produce beautiful, intelligent structures like Excalidraw UML, using arrows to connect geometries.\nExample schema:\n\`\`\`json\n[\n  { "type": "NODE", "x": 100, "y": 100, "data": { "label": "Start", "width": 120, "height": 40 }, "id": "uuid-node1" },\n  { "type": "SHAPE", "x": 100, "y": 250, "data": { "shape": "diamond", "width": 120, "height": 120, "color": "#FFD8A8" }, "strokeWidth": 2, "id": "uuid-shape1" },\n  { "type": "TEXT", "x": 130, "y": 280, "data": { "text": "Is Valid?", "width": 80, "height": 30 }, "color": "#ffffff", "fontSize": 16, "id": "uuid-text1" },\n  { "type": "EDGE", "data": { "from": "uuid-node1", "to": "uuid-shape1" }, "color": "#a5d8ff", "strokeWidth": 2 }\n]\n\`\`\`\nEnsure EDGE objects connect 'from' and 'to' valid node/shape/text UUIDs. Nodes and texts should be placed in intuitive flow chart positions. Otherwise, provide a concise answer.`;
         reqParts.push({ text: systemPrompt });
         
         if (imageContext) {
@@ -843,9 +843,22 @@ io.on("connection", (socket) => {
             const parsedArray = JSON.parse(jsonMatch[1]);
             const state = stateRaw ? safeParseJSON(stateRaw) : { objects: [], roomId };
             
+            const idMap = {};
+            
             parsedArray.forEach(obj => {
-              obj.id = crypto.randomUUID();
+              if (obj.id) idMap[obj.id] = crypto.randomUUID();
+            });
+
+            parsedArray.forEach(obj => {
+              const oldId = obj.id;
+              obj.id = idMap[oldId] || crypto.randomUUID();
               obj.updatedAt = Date.now();
+              
+              if (obj.type === "EDGE" && obj.data) {
+                 if (obj.data.from && idMap[obj.data.from]) obj.data.from = idMap[obj.data.from];
+                 if (obj.data.to && idMap[obj.data.to]) obj.data.to = idMap[obj.data.to];
+              }
+              
               state.objects.push(obj);
             });
 

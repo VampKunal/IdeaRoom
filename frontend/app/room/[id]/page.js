@@ -1,12 +1,129 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { getRoom } from "../../lib/api";
 import { connectSocket, getSocket } from "../../lib/socket";
 import html2canvas from "html2canvas";
 import RoomChat from "../../../components/RoomChat";
 import { useAuth } from "../../../context/AuthContext";
 import { useRouter } from "next/navigation";
+import rough from "roughjs";
+import { getStroke } from "perfect-freehand";
+
+function RoughShape({ shape, width, height, color, strokeWidth, bgStyle = "hachure" }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    containerRef.current.innerHTML = "";
+    const rc = rough.svg(containerRef.current);
+    const options = { 
+      stroke: color || "#ffffff", 
+      strokeWidth: strokeWidth || 2, 
+      roughness: 1.5, 
+      fill: shape === "node" ? color : (color ? color + "40" : "transparent"), 
+      fillStyle: bgStyle,
+      fillWeight: 1 
+    };
+    let node;
+    const w = width;
+    const h = height;
+    if (shape === "rect" || shape === "node") {
+      node = rc.rectangle(0, 0, w, h, options);
+    } else if (shape === "circle") {
+      node = rc.circle(w/2, h/2, w, options);
+    } else if (shape === "triangle") {
+      node = rc.polygon([[w/2, 0], [0, h], [w, h]], options);
+    } else if (shape === "diamond") {
+      node = rc.polygon([[w/2, 0], [w, h/2], [w/2, h], [0, h/2]], options);
+    }
+    if (node) {
+      containerRef.current.appendChild(node);
+    }
+  }, [shape, width, height, color, strokeWidth, bgStyle]);
+
+  return <svg ref={containerRef} width={width} height={height} style={{ overflow: "visible", pointerEvents: "none", display: "block" }} />;
+}
+
+function RoughEdge({ x1, y1, x2, y2, color, strokeWidth }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    containerRef.current.innerHTML = "";
+    const rc = rough.svg(containerRef.current);
+    const options = { stroke: color || "#ffffff", strokeWidth: strokeWidth || 2, roughness: 1.5 };
+    
+    // Line connecting nodes
+    const lineNode = rc.line(x1, y1, x2, y2, options);
+    containerRef.current.appendChild(lineNode);
+
+    // Arrowhead logic
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const size = 15;
+    const p1x = x2 - size * Math.cos(angle - Math.PI / 6);
+    const p1y = y2 - size * Math.sin(angle - Math.PI / 6);
+    const p2x = x2 - size * Math.cos(angle + Math.PI / 6);
+    const p2y = y2 - size * Math.sin(angle + Math.PI / 6);
+    const arrowNode = rc.linearPath([[p1x, p1y], [x2, y2], [p2x, p2y]], options);
+    containerRef.current.appendChild(arrowNode);
+  }, [x1, y1, x2, y2, color, strokeWidth]);
+
+  return <svg ref={containerRef} x="0" y="0" overflow="visible" style={{ pointerEvents: "none" }} />;
+}
+
+function getSvgPathFromStroke(stroke) {
+  if (!stroke || !stroke.length) return "";
+  const d = stroke.reduce(
+    (acc, [x0, y0], i, arr) => {
+      const [x1, y1] = arr[(i + 1) % arr.length];
+      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      return acc;
+    },
+    ["M", ...stroke[0], "Q"]
+  );
+  d.push("Z");
+  return d.join(" ");
+}
+
+// Smoothing helper: convert points → quadratic Bézier path (no thinning)
+function pointsToQuadraticPath(points) {
+  if (!points || points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  if (points.length === 2) {
+    // fallback to a short quadratic to reach the second point
+    return `M ${points[0].x} ${points[0].y} Q ${points[1].x} ${points[1].y} ${points[1].x} ${points[1].y}`;
+  }
+
+  let d = `M ${points[0].x} ${points[0].y}`;
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const pA = points[i];
+    const pB = points[i + 1];
+    const midX = (pA.x + pB.x) / 2;
+    const midY = (pA.y + pB.y) / 2;
+    d += ` Q ${pA.x} ${pA.y} ${midX} ${midY}`;
+  }
+
+  // final segment to the last point
+  const penult = points[points.length - 2];
+  const last = points[points.length - 1];
+  d += ` Q ${penult.x} ${penult.y} ${last.x} ${last.y}`;
+
+  return d;
+}
+
+function getFreehandPath(points, strokeWidth) {
+  if (!points || points.length < 2) return pointsToQuadraticPath(points);
+  const stroke = getStroke(points.map(p => [p.x, p.y]), {
+    size: strokeWidth || 2,
+    thinning: 0.5,
+    smoothing: 0.5,
+    streamline: 0.5,
+  });
+  return getSvgPathFromStroke(stroke);
+}
+
 
 import {
   MousePointer2, Hand, Pencil, Eraser, Undo, Redo,
@@ -1032,32 +1149,7 @@ export default function RoomPage({ params }) {
   }
 
 
-  // Smoothing helper: convert points → quadratic Bézier path (no thinning)
-  function pointsToQuadraticPath(points) {
-    if (!points || points.length === 0) return "";
-    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-    if (points.length === 2) {
-      // fallback to a short quadratic to reach the second point
-      return `M ${points[0].x} ${points[0].y} Q ${points[1].x} ${points[1].y} ${points[1].x} ${points[1].y}`;
-    }
 
-    let d = `M ${points[0].x} ${points[0].y}`;
-
-    for (let i = 1; i < points.length - 1; i++) {
-      const pA = points[i];
-      const pB = points[i + 1];
-      const midX = (pA.x + pB.x) / 2;
-      const midY = (pA.y + pB.y) / 2;
-      d += ` Q ${pA.x} ${pA.y} ${midX} ${midY}`;
-    }
-
-    // final segment to the last point
-    const penult = points[points.length - 2];
-    const last = points[points.length - 1];
-    d += ` Q ${penult.x} ${penult.y} ${last.x} ${last.y}`;
-
-    return d;
-  }
 
 
 
@@ -1484,47 +1576,50 @@ export default function RoomPage({ params }) {
           }}
         >
           <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
-            {currentStroke && (
-              <path
-                d={pointsToQuadraticPath(currentStroke.points)}
-                stroke={currentStroke.color}
-                strokeWidth={currentStroke.width || 2}
-                strokeDasharray={
-                  currentStroke.strokeStyle === "dashed" ? "8,8" :
-                    currentStroke.strokeStyle === "dotted" ? "2,8" : undefined
-                }
-                opacity={currentStroke.opacity || 1}
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ pointerEvents: "none" }}
-              />
-            )}
+            {currentStroke && (() => {
+               const isSolid = !currentStroke.strokeStyle || currentStroke.strokeStyle === "solid";
+               return (
+                  <path
+                    d={isSolid ? getFreehandPath(currentStroke.points, currentStroke.width) : pointsToQuadraticPath(currentStroke.points)}
+                    stroke={isSolid ? "none" : currentStroke.color}
+                    fill={isSolid ? currentStroke.color : "none"}
+                    strokeWidth={isSolid ? 0 : (currentStroke.width || 2)}
+                    strokeDasharray={
+                      currentStroke.strokeStyle === "dashed" ? "8,8" :
+                        currentStroke.strokeStyle === "dotted" ? "2,8" : undefined
+                    }
+                    opacity={currentStroke.opacity || 1}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: "none" }}
+                  />
+               );
+            })()}
             {/* PERSISTED STROKES */}
             {objects
               .filter((o) => o.type === "STROKE")
-              .map((stroke) => (
+              .map((stroke) => {
+                const isSolid = !stroke.strokeStyle || stroke.strokeStyle === "solid";
+                return (
                 <React.Fragment key={stroke.id}>
                   <path
-                    key={stroke.id}
-                    d={pointsToQuadraticPath(stroke.points)}
-                    stroke={stroke.color || "#ffffff"}
+                    d={isSolid ? getFreehandPath(stroke.points, selectedIds.includes(stroke.id) ? (stroke.width || 2) + 2 : (stroke.width || 2)) : pointsToQuadraticPath(stroke.points)}
+                    stroke={isSolid ? "none" : (stroke.color || "#ffffff")}
+                    fill={isSolid ? (stroke.color || "#ffffff") : "none"}
                     strokeWidth={
-                      selectedIds.includes(stroke.id)
+                      isSolid ? 0 : (selectedIds.includes(stroke.id)
                         ? (stroke.width || 2) + 2
-                        : stroke.width || 2
+                        : stroke.width || 2)
                     }
                     strokeDasharray={
                       stroke.strokeStyle === "dashed" ? "8,8" :
                         stroke.strokeStyle === "dotted" ? "2,8" : undefined
                     }
                     opacity={stroke.opacity || 1}
-                    fill="none"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     style={{ pointerEvents: "stroke" }}
                     onMouseDown={(e) => {
-                      // only start selection/drag on select tool — let draw/erase pass through
                       if (tool === "select") onMouseDown(e, stroke);
                     }}
                   />
@@ -1540,44 +1635,7 @@ export default function RoomPage({ params }) {
                     }}
                   />
                 </React.Fragment>
-              ))}
-            {/* PERSISTED STROKES */}
-            {objects
-              .filter((o) => o.type === "STROKE")
-              .map((stroke) => (
-                <React.Fragment key={stroke.id}>
-                  <path
-                    key={stroke.id}
-                    d={pointsToQuadraticPath(stroke.points)}
-                    stroke={stroke.color || "#ffffff"}
-                    strokeWidth={
-                      selectedIds.includes(stroke.id)
-                        ? (stroke.width || 2) + 2
-                        : stroke.width || 2
-                    }
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    style={{ pointerEvents: "stroke" }}
-                    onMouseDown={(e) => {
-                      // only start selection/drag on select tool — let draw/erase pass through
-                      if (tool === "select") onMouseDown(e, stroke);
-                    }}
-                  />
-                  {/* PHANTOM PATH FOR EASIER SELECTION */}
-                  < path
-                    d={pointsToQuadraticPath(stroke.points)}
-                    stroke="transparent"
-                    strokeWidth={20}
-                    fill="none"
-                    style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                    onMouseDown={(e) => {
-                      if (tool === "select") onMouseDown(e, stroke);
-                    }}
-                  />
-                </React.Fragment>
-              ))}
-
+              )})}
 
             {objects
               .filter((o) => o.type === "EDGE")
@@ -1586,16 +1644,20 @@ export default function RoomPage({ params }) {
                 const to = nodeMap[edge.data.to];
                 if (!from || !to) return null;
 
-                return (
-                  <line
-                    key={edge.id}
-                    x1={from.x + (from.data.width || 120) / 2}
-                    y1={from.y + (from.data.height || 40) / 2}
-                    x2={to.x + (to.data.width || 120) / 2}
-                    y2={to.y + (to.data.height || 40) / 2}
-                    stroke="#495057"
-                    strokeWidth={selectedIds.includes(edge.id) ? 3 : 1}
+                const fromX = from.x + (from.data.width || 120) / 2;
+                const fromY = from.y + (from.data.height || 40) / 2;
+                const toX = to.x + (to.data.width || 120) / 2;
+                const toY = to.y + (to.data.height || 40) / 2;
 
+                return (
+                  <RoughEdge 
+                    key={edge.id}
+                    x1={fromX}
+                    y1={fromY}
+                    x2={toX}
+                    y2={toY}
+                    color={edge.color || "#495057"}
+                    strokeWidth={selectedIds.includes(edge.id) ? 4 : 2}
                   />
                 );
               })}
@@ -1663,6 +1725,7 @@ export default function RoomPage({ params }) {
                       fontWeight: obj.fontWeight || "normal",
                       textAlign: obj.textAlign || "left",
                       color: obj.color || "#ffffff",
+                      fontFamily: "'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: obj.textAlign === "center" ? "center" : obj.textAlign === "right" ? "flex-end" : "flex-start",
@@ -1720,16 +1783,22 @@ export default function RoomPage({ params }) {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      background: selected ? "#d0ebff" : "#e7f5ff",
-                      border: selected
-                        ? "2px solid #1971c2"
-                        : "1px solid #228be6",
-                      borderRadius: 6,
                       cursor: "grab",
                       userSelect: "none",
                       pointerEvents: "auto",
+                      fontFamily: "'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive",
+                      color: obj.color || "#ffffff",
                     }}
                   >
+                    <div style={{ position: "absolute", inset: 0, zIndex: -1 }}>
+                      <RoughShape
+                        shape="node"
+                        width={width}
+                        height={height}
+                        color={selected ? "#1971c2" : (obj.data.color || "#228be6")}
+                        bgStyle={selected ? "cross-hatch" : "hachure"}
+                      />
+                    </div>
                     {obj.data.label}
                   </div>
                 );
@@ -1738,13 +1807,10 @@ export default function RoomPage({ params }) {
               /* ---------- SHAPES ---------- */
               if (obj.type === "SHAPE") {
                 const isCircle = obj.data.shape === "circle";
-                const isTriangle = obj.data.shape === "triangle";
-                const isDiamond = obj.data.shape === "diamond";
-
                 const w = isCircle ? obj.data.radius * 2 : obj.data.width;
                 const h = isCircle ? obj.data.radius * 2 : obj.data.height;
                 const borderColor = obj.data.color || obj.color || "#ffffff";
-                const finalBorderWidth = obj.strokeWidth || 3;
+                const finalBorderWidth = obj.strokeWidth || 2;
 
                 return (
                   <div
@@ -1757,28 +1823,18 @@ export default function RoomPage({ params }) {
                       width: w,
                       height: h,
                       opacity: obj.opacity || 1,
-                      outline: selected ? "2px solid #1971c2" : "none",
                       cursor: "grab",
                       pointerEvents: "auto",
                       background: "transparent",
-                      borderWidth: (isTriangle || isDiamond) ? 0 : finalBorderWidth,
-                      borderStyle: "solid",
-                      borderColor: borderColor,
-                      borderRadius: isCircle ? "50%" : (obj.borderRadius || 0),
                     }}
                   >
-                    {(isTriangle || isDiamond) && (
-                      <svg width="100%" height="100%" style={{ overflow: "visible" }}>
-                        <polygon
-                          points={isTriangle ? "50,0 0,100 100,100" : "50,0 100,50 50,100 0,50"}
-                          fill="none"
-                          stroke={borderColor}
-                          strokeWidth={finalBorderWidth}
-                          strokeLinejoin="round"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      </svg>
-                    )}
+                    <RoughShape
+                      shape={obj.data.shape}
+                      width={w}
+                      height={h}
+                      color={borderColor}
+                      strokeWidth={selected ? finalBorderWidth + 2 : finalBorderWidth}
+                    />
                   </div>
                 );
               }
