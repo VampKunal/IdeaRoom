@@ -140,6 +140,43 @@ function getFreehandPath(points, strokeWidth) {
 }
 
 
+// Simple line-rectangle intersection to find the point on the border
+function getIntersectPoint(fromX, fromY, toX, toY, box) {
+  const { x, y, width, height } = box;
+  const left = x, right = x + width, top = y, bottom = y + height;
+
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+
+  if (dx !== 0) {
+    const tLeft = (left - fromX) / dx;
+    if (tLeft > 0 && tLeft < 1) {
+      const py = fromY + tLeft * dy;
+      if (py >= top && py <= bottom) return { x: left, y: py };
+    }
+    const tRight = (right - fromX) / dx;
+    if (tRight > 0 && tRight < 1) {
+      const py = fromY + tRight * dy;
+      if (py >= top && py <= bottom) return { x: right, y: py };
+    }
+  }
+
+  if (dy !== 0) {
+    const tTop = (top - fromY) / dy;
+    if (tTop > 0 && tTop < 1) {
+      const px = fromX + tTop * dx;
+      if (px >= left && px <= right) return { x: px, y: top };
+    }
+    const tBottom = (bottom - fromY) / dy;
+    if (tBottom > 0 && tBottom < 1) {
+      const px = fromX + tBottom * dx;
+      if (px >= left && px <= right) return { x: px, y: bottom };
+    }
+  }
+
+  return { x: toX, y: toY };
+}
+
 import {
   MousePointer2, Hand, Pencil, Eraser, Undo, Redo,
   Type, Square, Circle, Triangle, Diamond, Share2,
@@ -310,14 +347,14 @@ export default function RoomPage({ params }) {
             action: {
               label: "Approve",
               onClick: () => {
-                socket.emit("join-response", { requesterSocketId: socketId, approved: true });
+                socket.emit("join-response", { requesterSocketId: socketId, approved: true, roomId });
                 toast.dismiss(tId);
               }
             },
             cancel: {
               label: "Deny",
               onClick: () => {
-                socket.emit("join-response", { requesterSocketId: socketId, approved: false });
+                socket.emit("join-response", { requesterSocketId: socketId, approved: false, roomId });
                 toast.dismiss(tId);
               }
             },
@@ -1686,18 +1723,22 @@ export default function RoomPage({ params }) {
                 const fromBounds = getObjectBounds(from);
                 const toBounds = getObjectBounds(to);
 
-                const fromX = fromBounds.x + fromBounds.width / 2;
-                const fromY = fromBounds.y + fromBounds.height / 2;
-                const toX = toBounds.x + toBounds.width / 2;
-                const toY = toBounds.y + toBounds.height / 2;
+                const cFromX = fromBounds.x + fromBounds.width / 2;
+                const cFromY = fromBounds.y + fromBounds.height / 2;
+                const cToX = toBounds.x + toBounds.width / 2;
+                const cToY = toBounds.y + toBounds.height / 2;
+
+                // Smart Border Connection
+                const pStart = getIntersectPoint(cToX, cToY, cFromX, cFromY, fromBounds);
+                const pEnd = getIntersectPoint(cFromX, cFromY, cToX, cToY, toBounds);
 
                 return (
                   <RoughEdge 
                     key={edge.id}
-                    x1={fromX}
-                    y1={fromY}
-                    x2={toX}
-                    y2={toY}
+                    x1={pStart.x}
+                    y1={pStart.y}
+                    x2={pEnd.x}
+                    y2={pEnd.y}
                     color={edge.color || "#495057"}
                     strokeWidth={selectedIds.includes(edge.id) ? 4 : 2}
                   />
@@ -1909,6 +1950,34 @@ export default function RoomPage({ params }) {
               return null;
             })}
 
+            {/* REMOTE CURSORS (WORLD COORDINATES) */}
+            {Object.entries(otherCursors).map(([id, cursor]) => (
+              <div key={id} style={{
+                position: "absolute",
+                left: cursor.x,
+                top: cursor.y,
+                pointerEvents: "none",
+                zIndex: 1000,
+                transition: "all 0.15s linear", // Slightly slower for smoother interpolate
+              }}>
+                {/* Cursor Icon */}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ filter: "drop-shadow(0px 1px 2px rgba(0,0,0,0.3))" }}>
+                  <path d="M0 0 L15 8 L8 11 L6 16 Z" fill={cursor.color || "#3b82f6"} stroke="white" strokeWidth="1" />
+                </svg>
+                {cursor.userName && (
+                  <span style={{ 
+                    position: "absolute", left: 14, top: 14, 
+                    background: cursor.color || "#3b82f6", color: "white", 
+                    padding: "2px 6px", borderRadius: 6, fontSize: 10, fontWeight: "bold",
+                    whiteSpace: "nowrap", border: "1.5px solid white",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.15)"
+                  }}>
+                    {cursor.userName}
+                  </span>
+                )}
+              </div>
+            ))}
+
             {/* GROUP / SELECTION OVERLAY */}
             {selectedIds.length > 0 && (() => {
               const bounds = getSelectionBounds(selectedIds);
@@ -1964,32 +2033,7 @@ export default function RoomPage({ params }) {
           />
         )}
 
-        {/* CURSORS LAYER */}
-        {Object.entries(otherCursors).map(([id, cursor]) => (
-          <div key={id} style={{
-            position: "absolute",
-            left: cursor.x * zoom + pan.x, // Transform world to screen for cursors?
-            // Wait, Cursors are usually in World Coords.
-            // If I render them here (Screen layer), I must transform them!
-            // OR I should move Cursors INTO the World Layer.
-            // Moving them into World Layer is easiest.
-            // But for now let's just fix syntax. I'll transform them manually here.
-            top: cursor.y * zoom + pan.y,
-            pointerEvents: "none",
-            zIndex: 99999,
-            transition: "transform 0.1s linear",
-          }}>
-            {/* Cursor Icon */}
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ filter: "drop-shadow(0px 2px 4px rgba(0,0,0,0.2))" }}>
-              <path d="M5.65376 12.3673H5.46026L5.31717 12.4976L0.500002 16.8829L0.500002 1.19177L15.6841 8.78368L7.69614 10.999L5.65376 12.3673Z" fill={cursor.color || "#09f"} stroke="white" strokeWidth="1" />
-            </svg>
-            {cursor.userName && (
-              <span style={{ position: "absolute", left: 16, top: 12, background: cursor.color, color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 10, whiteSpace: "nowrap" }}>
-                {cursor.userName}
-              </span>
-            )}
-          </div>
-        ))}
+
 
         {/* USER LIST (activeUsers) */}
 

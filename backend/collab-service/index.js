@@ -2,6 +2,20 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const axios = require("axios");
+
+function stringToColor(str) {
+  if (!str) return "#3b82f6";
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  let color = "#";
+  for (let i = 0; i < 3; i++) {
+    const value = (hash >> (i * 8)) & 0xff;
+    color += ("00" + value.toString(16)).substr(-2);
+  }
+  return color;
+}
 const cors = require("cors");
 
 const redisClient = require("./redis");
@@ -130,7 +144,8 @@ io.on("connection", (socket) => {
   socket.on("join-room", async (roomId) => {
     try {
       // validate room via API Gateway
-      await axios.get(`${API_GATEWAY_URL}/room/${roomId}`);
+      const res = await axios.get(`${API_GATEWAY_URL}/room/${roomId}`);
+      const room = res.data;
 
       socket.join(roomId);
 
@@ -161,6 +176,22 @@ io.on("connection", (socket) => {
             }
           }
           console.log(`[PERSIST] Loaded room ${roomId} from MongoDB.`);
+        }
+      }
+
+      // If OWNER, send pending join requests
+      if (room && socket.user && socket.user.uid === room.ownerId) {
+        const pendingKey = `room:${roomId}:pending-joins`;
+        const pendingStrMap = await redisClient.hGetAll(pendingKey);
+        for (const [sid, dataStr] of Object.entries(pendingStrMap)) {
+          try {
+            const data = JSON.parse(dataStr);
+            console.log(`[JOIN] Sending pending join from ${data.user.name} to owner.`);
+            socket.emit("join-request-notification", {
+              user: data.user,
+              socketId: sid // use original sid stored
+            });
+          } catch (e) {}
         }
       }
 
@@ -278,10 +309,16 @@ io.on("connection", (socket) => {
           user: socket.user || { name: "Guest", picture: null },
           socketId: socket.id
         });
-      } else {
-        // Owner offline -> Strict fail for now
-        socket.emit("join-denied", { reason: "Owner is offline" });
       }
+
+      // PERSIST join request in Redis
+      await redisClient.hSet(`room:${roomId}:pending-joins`, socket.id, JSON.stringify({
+        user: socket.user || { name: "Guest", picture: null },
+        timestamp: Date.now()
+      }));
+      // Set expiry on the whole set or just let it live? 
+      // safer to expire after say 10 mins
+      await redisClient.expire(`room:${roomId}:pending-joins`, 600);
 
     } catch (e) {
       console.error("Join Request Error:", e);
@@ -289,7 +326,12 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("join-response", ({ requesterSocketId, approved }) => {
+  socket.on("join-response", async ({ requesterSocketId, approved, roomId }) => {
+    // 1. Remove from pending set
+    if (roomId) {
+      await redisClient.hDel(`room:${roomId}:pending-joins`, requesterSocketId);
+    }
+
     if (approved) {
       io.to(requesterSocketId).emit("join-approved");
     } else {
@@ -305,7 +347,7 @@ io.on("connection", (socket) => {
       position,
       userId,
       userName, // optional if we want names
-      color: "#" + Math.floor(Math.random() * 16777215).toString(16) // simple random color logic or pass from front
+      color: stringToColor(userId || socket.id)
     });
   });
 
