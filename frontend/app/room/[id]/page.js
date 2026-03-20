@@ -1319,7 +1319,7 @@ export default function RoomPage({ params }) {
 
   /* ---------------- UI ---------------- */
   return (
-    <main className="h-screen w-full flex flex-col bg-zinc-950 text-white overflow-hidden relative selection:bg-blue-500/30">
+    <main className="h-screen w-full flex flex-col bg-zinc-950 text-white overflow-hidden relative selection:bg-emerald-500/30">
 
       {/* 🚀 NEW FLOATING UI */}
 
@@ -1330,7 +1330,7 @@ export default function RoomPage({ params }) {
         <div className="bg-zinc-900/80 backdrop-blur-xl border border-white/10 p-2 rounded-2xl flex items-center gap-3 pointer-events-auto shadow-2xl">
           <button
             onClick={() => router.push("/")}
-            className="p-2 hover:bg-white/10 rounded-xl transition text-blue-400"
+            className="p-2 hover:bg-white/10 rounded-xl transition text-emerald-400"
             title="Back to Dashboard"
           >
             <ChevronDown className="rotate-90" size={20} />
@@ -1364,7 +1364,7 @@ export default function RoomPage({ params }) {
               navigator.clipboard.writeText(window.location.href);
               toast.success("Link copied to clipboard!");
             }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-bold transition text-white"
+            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition text-white"
           >
             <Share2 size={14} />
             <span className="hidden sm:inline">Share</span>
@@ -1428,8 +1428,8 @@ export default function RoomPage({ params }) {
 
       {/* 3. CONTEXT MENU / PROPERTIES (Floating Left) */}
       {(selectedIds.length > 0 || tool === "draw") && (
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-50 pointer-events-auto">
-          <div className="bg-zinc-900/90 backdrop-blur-xl border border-white/10 p-4 rounded-2xl shadow-2xl flex flex-col gap-6 w-16 items-center animate-in slide-in-from-left-4 fade-in duration-300">
+        <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 pointer-events-auto">
+          <div className="bg-zinc-900/95 backdrop-blur-3xl border border-white/10 p-5 rounded-[24px] shadow-2xl flex flex-col gap-8 w-18 items-center animate-in slide-in-from-left-6 fade-in duration-500 ring-1 ring-white/5">
             {/* Color */}
             <div className="relative group">
               <div className="w-8 h-8 rounded-full border-2 border-white/20 cursor-pointer shadow-lg" style={{ backgroundColor: color }}></div>
@@ -1871,7 +1871,7 @@ export default function RoomPage({ params }) {
                         shape="node"
                         width={width}
                         height={height}
-                        color={selected ? "#1971c2" : (obj.data.color || "#228be6")}
+                        color={selected ? "#10b981" : (obj.data.color || "#059669")}
                         bgStyle={selected ? "cross-hatch" : "hachure"}
                       />
                     </div>
@@ -1932,7 +1932,7 @@ export default function RoomPage({ params }) {
                       top: obj.y,
                       width: obj.data.width,
                       height: obj.data.height,
-                      border: selected ? "2px solid #1971c2" : "none",
+                      border: selected ? "2px solid #10b981" : "none",
                       cursor: "grab",
                       pointerEvents: "auto",
                     }}
@@ -1962,12 +1962,12 @@ export default function RoomPage({ params }) {
               }}>
                 {/* Cursor Icon */}
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ filter: "drop-shadow(0px 1px 2px rgba(0,0,0,0.3))" }}>
-                  <path d="M0 0 L15 8 L8 11 L6 16 Z" fill={cursor.color || "#3b82f6"} stroke="white" strokeWidth="1" />
+                  <path d="M0 0 L15 8 L8 11 L6 16 Z" fill={cursor.color || "#10b981"} stroke="white" strokeWidth="1" />
                 </svg>
                 {cursor.userName && (
                   <span style={{ 
                     position: "absolute", left: 14, top: 14, 
-                    background: cursor.color || "#3b82f6", color: "white", 
+                    background: cursor.color || "#10b981", color: "white", 
                     padding: "2px 6px", borderRadius: 6, fontSize: 10, fontWeight: "bold",
                     whiteSpace: "nowrap", border: "1.5px solid white",
                     boxShadow: "0 2px 4px rgba(0,0,0,0.15)"
@@ -1991,7 +1991,7 @@ export default function RoomPage({ params }) {
                     top: bounds.minY,
                     width: bounds.width,
                     height: bounds.height,
-                    border: "1px solid #1971c2",
+                    border: "1px solid #10b981",
                     pointerEvents: "none"
                   }} />
 
@@ -2000,14 +2000,16 @@ export default function RoomPage({ params }) {
                     onMouseDownCapture={(e) => onResizeMouseDown(e)}
                     style={{
                       position: "absolute",
-                      left: bounds.maxX - 6,
-                      top: bounds.maxY - 6,
-                      width: 12,
-                      height: 12,
-                      background: "#1971c2",
-                      border: "1px solid white",
+                      left: bounds.maxX - 7,
+                      top: bounds.maxY - 7,
+                      width: 14,
+                      height: 14,
+                      background: "#10b981",
+                      border: "2px solid white",
+                      borderRadius: "50%",
                       cursor: "nwse-resize",
-                      pointerEvents: "auto"
+                      pointerEvents: "auto",
+                      boxShadow: "0 0 10px rgba(16,185,129,0.3)"
                     }}
                   />
                 </>
@@ -2270,7 +2272,7 @@ function ToolBtn({ icon: Icon, active, onClick, label }) {
   return (
     <button
       onClick={onClick}
-      className={`p-3 rounded-full transition-all group relative flex items-center justify-center ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50' : 'hover:bg-white/10 text-gray-400 hover:text-white'}`}
+      className={`p-3 rounded-full transition-all group relative flex items-center justify-center ${active ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/50' : 'hover:bg-white/10 text-gray-400 hover:text-white'}`}
     >
       <Icon size={20} />
       {label && (

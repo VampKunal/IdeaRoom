@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mail, Lock, User, ArrowRight, Github, Chrome } from "lucide-react";
+import { Mail, Lock, User, ArrowRight, Compass, ShieldCheck, Zap, Globe, Cpu } from "lucide-react";
 
 export default function AuthPage() {
     const { loginWithGoogle, user } = useAuth();
@@ -11,18 +11,22 @@ export default function AuthPage() {
 
     if (user) {
         return (
-            <div className="min-h-screen w-full flex flex-col items-center justify-center bg-zinc-950 text-white p-4">
-                <div className="max-w-md w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl p-8 text-center backdrop-blur-xl shadow-2xl">
-                    <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-full mx-auto flex items-center justify-center mb-6 shadow-lg shadow-blue-500/20">
-                        <User size={32} className="text-white" />
+            <div className="h-screen w-full flex flex-col items-center justify-center bg-[#09090b] text-white p-6 relative overflow-hidden">
+                <div className="absolute inset-0 bg-emerald-500/5 blur-[150px] pointer-events-none animate-pulse" />
+                <div className="max-w-md w-full bg-zinc-900/40 border border-zinc-800/50 rounded-3xl p-10 text-center backdrop-blur-2xl shadow-2xl relative z-10 scale-105">
+                    <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl mx-auto flex items-center justify-center mb-8 animate-bounce transition-all">
+                        <User size={32} className="text-emerald-400" />
                     </div>
-                    <h2 className="text-2xl font-bold mb-2">Welcome back!</h2>
-                    <p className="text-zinc-400 mb-6 font-medium">{user.displayName}</p>
+                    <h2 className="text-3xl font-black tracking-tighter mb-4 text-white uppercase italic">Access Granted</h2>
+                    <p className="text-zinc-500 mb-10 text-[10px] font-bold uppercase tracking-[0.3em] font-mono leading-relaxed">
+                        Session: Active<br/>
+                        Node: {user.displayName?.toUpperCase()}
+                    </p>
                     <a
                         href="/"
-                        className="inline-flex items-center justify-center gap-2 w-full py-3 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all"
+                        className="inline-flex items-center justify-center gap-4 w-full py-5 bg-emerald-500 text-zinc-950 font-black rounded-2xl hover:bg-emerald-400 transition-all shadow-[0_0_30px_rgba(16,185,129,0.2)] text-sm tracking-widest uppercase"
                     >
-                        Go to Dashboard <ArrowRight size={18} />
+                        INITIATE DASHBOARD <ArrowRight size={20} />
                     </a>
                 </div>
             </div>
@@ -30,110 +34,141 @@ export default function AuthPage() {
     }
 
     return (
-        <div className="min-h-screen w-full flex items-center justify-center bg-zinc-950 text-white p-4 relative overflow-hidden">
-            {/* Ambient Background Elements */}
-            <div className="absolute top-0 left-0 w-full h-[500px] bg-blue-600/10 blur-[120px] rounded-full pointer-events-none" />
-            <div className="absolute bottom-0 right-0 w-full h-[500px] bg-purple-600/10 blur-[120px] rounded-full pointer-events-none" />
+        <div className="h-screen w-full flex flex-col lg:flex-row bg-[#09090b] text-white overflow-hidden font-sans relative">
+            
+            {/* Ambient Background Layer */}
+            <div className="absolute inset-0 z-0">
+                <div className="absolute top-[-10%] left-[10%] w-[50%] h-[50%] bg-emerald-500/[0.07] blur-[150px] rounded-full" />
+                <div className="absolute bottom-[20%] right-[-10%] w-[40%] h-[40%] bg-zinc-500/[0.05] blur-[150px] rounded-full" />
+            </div>
 
-            <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800/50 rounded-3xl shadow-2xl overflow-hidden relative z-10">
-                {/* Header */}
-                <div className="p-8 pb-0 text-center">
-                    <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-400 mb-2">
-                        Idea Room
-                    </h1>
-                    <p className="text-zinc-400 text-sm">
-                        Collaborate in real-time with infinite possibilities.
-                    </p>
-                </div>
-
-                {/* Toggle Wrapper */}
-                <div className="px-8 mt-8">
-                    <div className="grid grid-cols-2 p-1 bg-zinc-950/50 rounded-xl border border-zinc-800">
-                        <button
-                            onClick={() => setIsLogin(true)}
-                            className={`py-2.5 text-sm font-medium rounded-lg transition-all ${isLogin
-                                ? "bg-zinc-800 text-white shadow-sm"
-                                : "text-zinc-500 hover:text-zinc-300"
-                                }`}
-                        >
-                            Log In
-                        </button>
-                        <button
-                            onClick={() => setIsLogin(false)}
-                            className={`py-2.5 text-sm font-medium rounded-lg transition-all ${!isLogin
-                                ? "bg-zinc-800 text-white shadow-sm"
-                                : "text-zinc-500 hover:text-zinc-300"
-                                }`}
-                        >
-                            Sign Up
-                        </button>
-                    </div>
-                </div>
-
-                {/* Form Container */}
-                <div className="p-8">
-                    <AnimatePresence mode="wait">
-                        {isLogin ? (
-                            <motion.div
-                                key="login"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.2 }}
-                            >
-                                <LoginForm />
-                            </motion.div>
-                        ) : (
-                            <motion.div
-                                key="signup"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.2 }}
-                            >
-                                <SignupForm />
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-
-                    <div className="relative my-8">
-                        <div className="absolute inset-0 flex items-center">
-                            <div className="w-full border-t border-zinc-800"></div>
+            {/* Left Side: Illustration / Branding (Visible on Desktop) */}
+            <div className="hidden lg:flex lg:w-[45%] xl:w-[50%] relative items-center justify-center p-12 xl:p-20 z-10 border-r border-zinc-800/30">
+                <div className="max-w-xl space-y-10">
+                    <div className="space-y-6">
+                        <div className="w-12 h-12 rounded-[18px] bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                            <Compass className="w-6 h-6 text-emerald-400" />
                         </div>
-                        <div className="relative flex justify-center text-xs uppercase">
-                            <span className="bg-zinc-900 px-4 text-zinc-500 font-medium tracking-wider">Or continue with</span>
-                        </div>
+                        <h1 className="text-6xl xl:text-7xl font-black tracking-tighter text-white leading-[0.9] uppercase italic">
+                            ENGINEER<br/>
+                            <span className="text-zinc-600 not-italic">TOGETHER.</span>
+                        </h1>
                     </div>
 
-                    <button
-                        onClick={loginWithGoogle}
-                        className="w-full flex items-center justify-center gap-3 bg-white text-black font-semibold py-3 rounded-xl hover:bg-zinc-200 transition-colors"
+                    <div className="grid grid-cols-2 gap-8 pt-8 border-t border-zinc-800/50">
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-emerald-400">
+                                <Zap size={14} />
+                                <span className="text-[10px] font-bold uppercase tracking-widest">Real-time Optix</span>
+                            </div>
+                            <p className="text-xs text-zinc-500 leading-relaxed max-w-[180px]">
+                                Sub-50ms latency for global collaborative sessions.
+                            </p>
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-zinc-400">
+                                <Cpu size={14} />
+                                <span className="text-[10px] font-bold uppercase tracking-widest">AI Synthesis</span>
+                            </div>
+                            <p className="text-xs text-zinc-500 leading-relaxed max-w-[180px]">
+                                Neural processing for structural diagram transformation.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Decorative Elements */}
+                <div className="absolute left-10 bottom-10 opacity-[0.05] pointer-events-none">
+                   <div className="text-[150px] font-black text-white leading-none select-none tracking-tighter">01</div>
+                </div>
+            </div>
+
+            {/* Right Side: Form Container */}
+            <div className="flex-1 flex items-center justify-center p-4 lg:p-12 z-10">
+                <div className="w-full max-w-[440px]">
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-zinc-900/40 border border-zinc-800/60 rounded-[32px] shadow-2xl overflow-hidden backdrop-blur-3xl p-1"
                     >
-                        {/* Simple Google SVG or Icon */}
-                        <svg className="w-5 h-5" viewBox="0 0 24 24">
-                            <path
-                                fill="currentColor"
-                                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                            />
-                            <path
-                                fill="currentColor"
-                                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                            />
-                            <path
-                                fill="currentColor"
-                                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                            />
-                            <path
-                                fill="currentColor"
-                                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                            />
-                        </svg>
-                        Google
-                    </button>
+                        <div className="bg-zinc-900/60 rounded-[30px] p-8 lg:p-10">
+                            {/* Mobile Logo */}
+                            <div className="lg:hidden text-center mb-8">
+                                <div className="mx-auto w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
+                                    <Compass className="w-5 h-5 text-emerald-400" />
+                                </div>
+                                <h2 className="text-xl font-black tracking-tighter uppercase text-white">IDEAROOM</h2>
+                            </div>
 
-                    <p className="mt-6 text-center text-xs text-zinc-500">
-                        By continuing, you agree to our <a href="#" className="underline hover:text-zinc-300">Terms of Service</a> and <a href="#" className="underline hover:text-zinc-300">Privacy Policy</a>.
-                    </p>
+                            <div className="mb-8 text-center lg:text-left">
+                                <h2 className="text-2xl font-bold tracking-tight text-white mb-1 uppercase tracking-tighter italic">Authorize Node</h2>
+                                <p className="text-zinc-500 text-[9px] font-bold uppercase tracking-widest">Secure Entry Point</p>
+                            </div>
+
+                            {/* Toggle Container */}
+                            <div className="grid grid-cols-2 p-1 bg-zinc-950/50 rounded-2xl border border-zinc-800/50 mb-8">
+                                <button
+                                    onClick={() => setIsLogin(true)}
+                                    className={`py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] rounded-xl transition-all ${isLogin
+                                        ? "bg-zinc-800 text-white shadow-xl"
+                                        : "text-zinc-600 hover:text-zinc-400"
+                                        }`}
+                                >
+                                    Log In
+                                </button>
+                                <button
+                                    onClick={() => setIsLogin(false)}
+                                    className={`py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] rounded-xl transition-all ${!isLogin
+                                        ? "bg-zinc-800 text-white shadow-xl"
+                                        : "text-zinc-600 hover:text-zinc-400"
+                                        }`}
+                                >
+                                    Sign Up
+                                </button>
+                            </div>
+
+                            <AnimatePresence mode="wait">
+                                {isLogin ? (
+                                    <motion.div
+                                        key="login"
+                                        initial={{ opacity: 0, x: -5 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: 5 }}
+                                        transition={{ duration: 0.2 }}
+                                    >
+                                        <LoginForm />
+                                    </motion.div>
+                                ) : (
+                                    <motion.div
+                                        key="signup"
+                                        initial={{ opacity: 0, x: -5 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: 5 }}
+                                        transition={{ duration: 0.2 }}
+                                    >
+                                        <SignupForm />
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            <div className="relative my-8">
+                                <div className="absolute inset-0 flex items-center">
+                                    <div className="w-full border-t border-zinc-800/50"></div>
+                                </div>
+                                <div className="relative flex justify-center text-[8px] font-black uppercase tracking-[0.3em]">
+                                    <span className="bg-zinc-900 px-4 text-zinc-600">External Provider</span>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={loginWithGoogle}
+                                className="w-full flex items-center justify-center gap-4 bg-zinc-100 text-zinc-950 font-black py-4 rounded-[18px] hover:bg-white transition-all text-[11px] uppercase tracking-widest shadow-lg shadow-black/20"
+                            >
+                                <Globe size={16} />
+                                Google Identity
+                            </button>
+                        </div>
+                    </motion.div>
                 </div>
             </div>
         </div>
@@ -142,15 +177,20 @@ export default function AuthPage() {
 
 function InputField({ label, type = "text", placeholder, value, onChange }) {
     return (
-        <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-400 ml-1">{label}</label>
+        <div className="space-y-2.5">
+            <div className="flex justify-between items-center px-1">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</label>
+                {type === "password" && (
+                     <a href="#" className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:text-emerald-400 transition-colors">Reset</a>
+                )}
+            </div>
             <div className="relative group">
                 <input
                     type={type}
                     value={value}
                     onChange={onChange}
                     placeholder={placeholder}
-                    className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-zinc-600"
+                    className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-4 py-3.5 text-xs focus:outline-none focus:border-emerald-500/50 transition-all placeholder:text-zinc-800 font-medium"
                 />
             </div>
         </div>
@@ -171,39 +211,34 @@ function LoginForm() {
         try {
             await loginWithEmail(email, password);
         } catch (e) {
-            setError("Invalid credentials");
+            setError("Authorization failure - Invalid keys.");
             setLoading(false);
         }
     };
 
     return (
-        <div className="space-y-5">
+        <div className="space-y-4">
             <InputField
-                label="Email Address"
+                label="System Identifier"
                 type="email"
-                placeholder="name@example.com"
+                placeholder="operator@organization.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
             />
-            <div>
-                <InputField
-                    label="Password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                />
-                <div className="flex justify-end mt-1">
-                    <a href="#" className="text-xs text-blue-500 hover:text-blue-400 font-medium">Forgot password?</a>
-                </div>
-            </div>
-            {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+            <InputField
+                label="Access Key"
+                type="password"
+                placeholder="••••••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+            />
+            {error && <p className="text-emerald-400 text-[9px] font-bold text-center uppercase tracking-widest animate-pulse">{error}</p>}
             <button
                 onClick={handleSubmit}
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black py-4.5 rounded-[18px] shadow-lg shadow-emerald-500/10 transition-all active:scale-[0.98] disabled:opacity-50 text-[11px] uppercase tracking-[0.2em]"
             >
-                {loading ? "Signing In..." : "Sign In"}
+                {loading ? "Initializing..." : "Authorize"}
             </button>
         </div>
     );
@@ -224,41 +259,41 @@ function SignupForm() {
         try {
             await signupWithEmail(email, password, name);
         } catch (e) {
-            setError(e.message || "Failed to create account");
+            setError("Initialization failure.");
             setLoading(false);
         }
     };
 
     return (
-        <div className="space-y-5">
+        <div className="space-y-4">
             <InputField
-                label="Full Name"
+                label="Identity Display"
                 type="text"
-                placeholder="John Doe"
+                placeholder="Operator Name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
             />
             <InputField
-                label="Email Address"
+                label="System Identifier"
                 type="email"
-                placeholder="name@example.com"
+                placeholder="operator@organization.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
             />
             <InputField
-                label="Password"
+                label="Access Key"
                 type="password"
-                placeholder="Create a password"
+                placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
             />
-            {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+            {error && <p className="text-emerald-400 text-[9px] font-bold text-center uppercase tracking-widest animate-pulse">{error}</p>}
             <button
                 onClick={handleSubmit}
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-zinc-100 hover:bg-white text-zinc-950 font-black py-4.5 rounded-[18px] shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 text-[11px] uppercase tracking-[0.2em]"
             >
-                {loading ? "Creating Account..." : "Create Account"}
+                {loading ? "Staging..." : "Initialize"}
             </button>
         </div>
     );
