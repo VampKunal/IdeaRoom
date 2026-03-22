@@ -58,3 +58,23 @@ export async function getRoom(roomId) {
 
   return res.json();
 }
+
+/**
+ * Measures round-trip time to API gateway /health (no auth).
+ * Returns latency in ms, or throws on network/HTTP failure.
+ */
+export async function pingApiHealth() {
+  const base = process.env.NEXT_PUBLIC_API_BASE;
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_API_BASE is not set");
+  }
+  const url = `${String(base).replace(/\/$/, "")}/health`;
+  const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const res = await fetch(url, { method: "GET", cache: "no-store" });
+  const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const latencyMs = Math.round(t1 - t0);
+  if (!res.ok) {
+    throw new Error(`Health check failed: ${res.status}`);
+  }
+  return { latencyMs, ok: true };
+}

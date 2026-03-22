@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import { getSocket } from "../app/lib/socket";
+import { buildHtml2CanvasOptions } from "../app/lib/html2canvasSafe";
 import { MessageSquare, X, Send, Sparkle, Command } from "lucide-react";
 
 export default function RoomChat({ roomId, user }) {
@@ -59,12 +60,15 @@ export default function RoomChat({ roomId, user }) {
         const board = document.getElementById("whiteboard-container");
         if (board) {
           const html2canvas = (await import("html2canvas")).default;
-          const canvas = await html2canvas(board, { 
-            backgroundColor: null,
-            useCORS: true, 
-            logging: false,
-            scale: 1
-          });
+          const canvas = await html2canvas(
+            board,
+            buildHtml2CanvasOptions({
+              backgroundColor: null,
+              useCORS: true,
+              logging: false,
+              scale: 1,
+            })
+          );
           const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
           base64Image = dataUrl.split(",")[1];
         }

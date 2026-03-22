@@ -1,24 +1,20 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useMotionValue, useTransform, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
-  Plus,
   LogOut,
   Trash2,
-  ArrowRight,
-  LayoutGrid,
-  Zap,
   Folder,
   History,
   Terminal,
-  MousePointer2,
   Box,
-  Compass
+  Sprout,
+  Zap
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { createRoom, getRoom, getMyRooms, deleteRoom } from "./lib/api";
+import { createRoom, getRoom, getMyRooms, deleteRoom, pingApiHealth } from "./lib/api";
 import BackgroundAnimation from "../components/BackgroundAnimation";
 
 export default function Home() {
@@ -29,6 +25,116 @@ export default function Home() {
   const [myRooms, setMyRooms] = useState([]);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+
+  /** Real network + API metrics for Network Status card */
+  const [networkStats, setNetworkStats] = useState({
+    online: true,
+    effectiveType: null,
+    downlink: null,
+    rtt: null,
+    apiLatencyMs: null,
+    apiReachable: null,
+    latencyHistory: [],
+  });
+
+  const readNavigatorConnection = useCallback(() => {
+    if (typeof navigator === "undefined") return { effectiveType: null, downlink: null, rtt: null };
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return { effectiveType: null, downlink: null, rtt: null };
+    return {
+      effectiveType: c.effectiveType ?? null,
+      downlink: typeof c.downlink === "number" ? c.downlink : null,
+      rtt: typeof c.rtt === "number" ? c.rtt : null,
+    };
+  }, []);
+
+  useEffect(() => {
+    const onOnline = () => setNetworkStats((s) => ({ ...s, online: true }));
+    const onOffline = () => setNetworkStats((s) => ({ ...s, online: false }));
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    setNetworkStats((s) => ({ ...s, online: navigator.onLine }));
+
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const onConnChange = () => {
+      setNetworkStats((s) => ({ ...s, ...readNavigatorConnection() }));
+    };
+    onConnChange();
+    c?.addEventListener?.("change", onConnChange);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+      c?.removeEventListener?.("change", onConnChange);
+    };
+  }, [readNavigatorConnection]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { latencyMs } = await pingApiHealth();
+        if (cancelled) return;
+        setNetworkStats((s) => ({
+          ...s,
+          apiLatencyMs: latencyMs,
+          apiReachable: true,
+          latencyHistory: [...s.latencyHistory.slice(-19), latencyMs],
+        }));
+      } catch {
+        if (cancelled) return;
+        setNetworkStats((s) => ({
+          ...s,
+          apiLatencyMs: null,
+          apiReachable: false,
+        }));
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [user]);
+
+  const latencyBadge = useMemo(() => {
+    if (!networkStats.online) return "OFFLINE";
+    if (networkStats.apiReachable === false) return "API DOWN";
+    if (networkStats.apiLatencyMs == null) return "…";
+    const ms = networkStats.apiLatencyMs;
+    if (ms < 120) return "LOW LATENCY";
+    if (ms < 280) return "MODERATE";
+    return "HIGH LATENCY";
+  }, [networkStats.online, networkStats.apiReachable, networkStats.apiLatencyMs]);
+
+  const sparklinePath = useMemo(() => {
+    const vals = networkStats.latencyHistory;
+    if (vals.length < 2) return "";
+    const w = 120;
+    const h = 48;
+    const pad = 6;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const rng = max - min || 1;
+    const step = (w - pad * 2) / (vals.length - 1);
+    return vals
+      .map((v, i) => {
+        const x = pad + i * step;
+        const y = h - pad - ((v - min) / rng) * (h - pad * 2);
+        return `${i === 0 ? "M" : "L"}${x},${y}`;
+      })
+      .join(" ");
+  }, [networkStats.latencyHistory]);
+
+  const barHeights = useMemo(() => {
+    const vals = networkStats.latencyHistory.slice(-7);
+    if (!vals.length) return [];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const rng = max - min || 1;
+    return vals.map((v) => Math.round(((v - min) / rng) * 100) || 8);
+  }, [networkStats.latencyHistory]);
 
   // Mouse-based parallax
   const mouseX = useMotionValue(0);
@@ -150,7 +256,7 @@ export default function Home() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
               <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                <Compass className="w-5 h-5 text-emerald-400" />
+                <Sprout className="w-5 h-5 text-emerald-400" />
               </div>
               <h1 className="text-lg font-bold tracking-tighter text-white flex items-center gap-2">
                 IDEAROOM
@@ -267,17 +373,95 @@ export default function Home() {
             </motion.div>
           </div>
 
-          {/* Right Column */}
-          <div className="lg:col-span-5 flex flex-col gap-6 py-12 max-h-full">
+          {/* Right Column — Network Status (top) + Active History (reference layout) */}
+          <div className="lg:col-span-5 flex flex-col gap-6 py-12 max-h-full min-h-0">
+            {/* Network Status + real-time viz */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="shrink-0 rounded-2xl bg-zinc-900/50 border border-zinc-800/60 backdrop-blur-md overflow-hidden shadow-[0_0_0_1px_rgba(24,24,27,0.5)]"
+            >
+              <div className="p-6 flex items-start justify-between gap-4 border-b border-zinc-800/50">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <Zap className="text-emerald-400" size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-300">
+                      Network Status
+                    </h2>
+                    <p className="text-[10px] text-zinc-600 uppercase tracking-widest mt-0.5 truncate">
+                      {networkStats.online ? "Online" : "Offline"}
+                      {networkStats.effectiveType ? ` · ${networkStats.effectiveType}` : ""}
+                      {networkStats.downlink != null ? ` · ${networkStats.downlink.toFixed(1)} Mbps down` : ""}
+                      {networkStats.rtt != null ? ` · ~${networkStats.rtt}ms rtt` : ""}
+                    </p>
+                    <p className="text-[10px] text-zinc-500 mt-1 font-mono">
+                      API:{" "}
+                      {networkStats.apiLatencyMs != null
+                        ? `${networkStats.apiLatencyMs}ms`
+                        : networkStats.apiReachable === false
+                          ? "unreachable"
+                          : "…"}
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-md border border-emerald-400/25 shadow-[0_0_20px_rgba(16,185,129,0.15)] max-w-[140px] text-center leading-tight">
+                  {latencyBadge}
+                </span>
+              </div>
+              <div className="p-6 grid grid-cols-2 gap-4">
+                <div className="rounded-xl bg-zinc-950/50 border border-zinc-800/60 p-3">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">
+                    API latency (ms)
+                  </p>
+                  <svg viewBox="0 0 120 48" className="w-full h-14" preserveAspectRatio="none">
+                    {sparklinePath ? (
+                      <path
+                        d={sparklinePath}
+                        fill="none"
+                        stroke="rgb(52,211,153)"
+                        strokeWidth="1.5"
+                        className="drop-shadow-[0_0_8px_rgba(52,211,153,0.45)]"
+                      />
+                    ) : (
+                      <text x="60" y="28" textAnchor="middle" className="fill-zinc-600 text-[8px] font-mono">
+                        {networkStats.apiReachable === false ? "No data" : "Collecting…"}
+                      </text>
+                    )}
+                  </svg>
+                </div>
+                <div className="rounded-xl bg-zinc-950/50 border border-zinc-800/60 p-3 flex flex-col justify-end">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">
+                    Recent pings
+                  </p>
+                  <div className="flex items-end justify-between gap-1 h-12 px-1">
+                    {(barHeights.length ? barHeights : [0, 0, 0, 0, 0, 0, 0]).map((h, i) => (
+                      <div
+                        key={i}
+                        className="flex-1 rounded-sm bg-gradient-to-t from-emerald-600/30 to-emerald-400/80 min-w-[6px]"
+                        style={{ height: `${Math.max(h, 4)}%` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
             <motion.div
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               className="flex-1 flex flex-col min-h-0 bg-zinc-900/30 border border-zinc-800/30 rounded-3xl overflow-hidden backdrop-blur-sm"
             >
-              <div className="p-8 pb-4 flex items-center justify-between shrink-0">
+              <div className="p-8 pb-4 flex items-center justify-between shrink-0 border-b border-zinc-800/30">
                 <div className="flex items-center gap-3">
-                  <History className="text-emerald-500" size={16} />
-                  <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-300">Active History</h2>
+                  <div className="p-1.5 rounded-lg bg-zinc-800/80 border border-zinc-700/50">
+                    <History className="text-emerald-500" size={16} />
+                  </div>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-300">
+                    Active History
+                  </h2>
                 </div>
                 <span className="text-[10px] font-bold text-zinc-500">
                   {myRooms.length} FOUND
@@ -286,12 +470,14 @@ export default function Home() {
 
               <div className="flex-1 overflow-y-auto hide-scrollbar px-6 pb-8">
                 {myRooms.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center text-zinc-600 gap-4 opacity-40">
-                    <Folder size={32} />
-                    <p className="text-xs font-medium max-w-[180px]">No active engineering logs found.</p>
+                  <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center text-zinc-600 gap-4 py-8">
+                    <Folder size={32} className="opacity-50" />
+                    <p className="text-xs font-medium max-w-[200px] leading-relaxed">
+                      No active engineering logs found.
+                    </p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="divide-y divide-zinc-800/50">
                     {myRooms.map((room, i) => (
                       <motion.div
                         key={room.roomId}
@@ -299,23 +485,30 @@ export default function Home() {
                         animate={{ opacity: 1 }}
                         transition={{ delay: i * 0.03 }}
                         onClick={() => router.push(`/room/${room.roomId}`)}
-                        className="group p-4 flex items-center justify-between rounded-xl bg-zinc-900/20 border border-transparent hover:bg-zinc-800/40 hover:border-zinc-700 transition-all cursor-pointer"
+                        className="group py-4 flex items-center justify-between first:pt-2 hover:bg-zinc-800/20 transition-all cursor-pointer -mx-2 px-2 rounded-lg"
                       >
                         <div className="flex items-center gap-4 min-w-0">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40 group-hover:bg-emerald-500 transition-colors" />
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 group-hover:bg-emerald-400 transition-colors shrink-0" />
                           <div className="min-w-0">
-                            <h4 className="text-sm font-bold text-zinc-100 truncate tracking-tight">{room.title}</h4>
+                            <h4 className="text-sm font-bold text-zinc-100 truncate tracking-tight">
+                              {room.title}
+                            </h4>
                             <p className="text-[10px] text-zinc-600 font-mono mt-0.5 uppercase">
-                              Modified {new Date(room.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              Modified{" "}
+                              {new Date(room.createdAt).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                              })}
                             </p>
                           </div>
                         </div>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDelete(room.roomId);
                           }}
-                          className="p-1 opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-zinc-400 transition-all"
+                          className="p-1.5 opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-zinc-400 transition-all"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -325,27 +518,12 @@ export default function Home() {
                 )}
               </div>
             </motion.div>
-
-            <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/50 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-emerald-500/5 rounded-full">
-                  <Zap className="text-emerald-400" size={18} />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Network Status</p>
-                  <p className="text-xs font-bold text-zinc-200">OPTIMIZED INFRASTRUCTURE</p>
-                </div>
-              </div>
-              <div className="text-[10px] font-bold text-emerald-400 bg-emerald-400/5 px-2 py-1 rounded border border-emerald-400/20">
-                LOW LATENCY
-              </div>
-            </div>
           </div>
         </main>
 
         {/* Footer */}
         <footer className="w-full px-10 py-6 flex items-center justify-between opacity-40 text-[9px] font-bold tracking-[0.4em] uppercase text-zinc-600 z-10 shrink-0">
-          <div>IDEAROOM &copy; 2026</div>
+          <div>IDEAROOM &copy; 2024</div>
           <div>V 0.1.0</div>
         </footer>
       </div>

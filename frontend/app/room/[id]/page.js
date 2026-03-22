@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { getRoom } from "../../lib/api";
 import { connectSocket, getSocket } from "../../lib/socket";
 import html2canvas from "html2canvas";
+import { buildHtml2CanvasOptions } from "@/app/lib/html2canvasSafe";
 import RoomChat from "../../../components/RoomChat";
 import { useAuth } from "../../../context/AuthContext";
 import { useRouter } from "next/navigation";
@@ -258,6 +259,12 @@ export default function RoomPage({ params }) {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
+  // idle cursor hint (30s no input) + export
+  const lastActivityRef = useRef(Date.now());
+  const [pointerIdle, setPointerIdle] = useState(false);
+  const [cursorScreenPos, setCursorScreenPos] = useState({ x: 0, y: 0 });
+  const [isExporting, setIsExporting] = useState(false);
+
   // remote cursors
   const [otherCursors, setOtherCursors] = useState({});
 
@@ -275,6 +282,44 @@ export default function RoomPage({ params }) {
     }
     unwrap();
   }, [params]);
+
+  /* ---------------- IDLE CURSOR (30s no input) ---------------- */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setCursorScreenPos({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const bump = () => {
+      lastActivityRef.current = Date.now();
+      setPointerIdle(false);
+    };
+    const onMove = (e) => {
+      lastActivityRef.current = Date.now();
+      setPointerIdle(false);
+      setCursorScreenPos({ x: e.clientX, y: e.clientY });
+    };
+    const onWheel = () => bump();
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mousedown", bump);
+    window.addEventListener("keydown", bump);
+    window.addEventListener("touchstart", bump, { passive: true });
+    window.addEventListener("wheel", onWheel, { passive: true });
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > 30000) {
+        setPointerIdle(true);
+      }
+    }, 1000);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mousedown", bump);
+      window.removeEventListener("keydown", bump);
+      window.removeEventListener("touchstart", bump);
+      window.removeEventListener("wheel", onWheel);
+    };
+  }, []);
 
   /* ---------------- LOAD ROOM ---------------- */
   useEffect(() => {
@@ -1279,6 +1324,44 @@ export default function RoomPage({ params }) {
     }
   }, [selectedIds]); // Sync on selection change
 
+  async function exportBoard(format = "png") {
+    const el = typeof document !== "undefined" ? document.getElementById("canvas-container") : null;
+    if (!el) {
+      toast.error("Canvas not ready");
+      return;
+    }
+    setIsExporting(true);
+    const toastId = toast.loading("Exporting board…");
+    try {
+      const canvas = await html2canvas(
+        el,
+        buildHtml2CanvasOptions({
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: room?.background || "#1e1e1e",
+          logging: false,
+        })
+      );
+      const mime = format === "jpeg" ? "image/jpeg" : "image/png";
+      const quality = format === "jpeg" ? 0.92 : undefined;
+      const dataUrl = canvas.toDataURL(mime, quality);
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      const slug = (room?.id || roomId || "board").toString().slice(0, 8);
+      a.download = `idearoom-${slug}-${Date.now()}.${format === "jpeg" ? "jpg" : "png"}`;
+      a.click();
+      toast.dismiss(toastId);
+      toast.success("Image downloaded");
+    } catch (err) {
+      console.error(err);
+      toast.dismiss(toastId);
+      toast.error("Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   if (!room) return <p style={{ padding: 40 }}>Loading...</p>;
 
   function updateSelected(changes) {
@@ -1320,6 +1403,32 @@ export default function RoomPage({ params }) {
   /* ---------------- UI ---------------- */
   return (
     <main className="h-screen w-full flex flex-col bg-zinc-950 text-white overflow-hidden relative selection:bg-emerald-500/30">
+      <style>{`
+        @keyframes idearoomIdlePulse {
+          0%, 100% { opacity: 0.2; transform: scale(1); }
+          50% { opacity: 0.42; transform: scale(1.06); }
+        }
+      `}</style>
+      {pointerIdle && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed z-[40]"
+          style={{
+            left: cursorScreenPos.x,
+            top: cursorScreenPos.y,
+            transform: "translate(-50%, -50%)",
+          }}
+        >
+          <div
+            className="rounded-full border border-emerald-400/30 bg-emerald-500/5"
+            style={{
+              width: 26,
+              height: 26,
+              animation: "idearoomIdlePulse 4.5s ease-in-out infinite",
+            }}
+          />
+        </div>
+      )}
 
       {/* 🚀 NEW FLOATING UI */}
 
@@ -1377,6 +1486,25 @@ export default function RoomPage({ params }) {
             <button onClick={() => connectSocket().emit("undo", { roomId })} className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition"><Undo size={18} /></button>
             <button onClick={() => connectSocket().emit("redo", { roomId })} className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition"><Redo size={18} /></button>
           </div>
+          <div className="h-6 w-px bg-white/10"></div>
+          <Dropdown placement="bottom-end">
+            <DropdownTrigger>
+              <Button
+                size="sm"
+                variant="flat"
+                className="min-w-0 px-2 text-emerald-400"
+                isDisabled={isExporting}
+                title="Download board as PNG or JPEG"
+              >
+                <Download size={16} />
+                <span className="hidden sm:inline ml-1 text-xs font-semibold">Export</span>
+              </Button>
+            </DropdownTrigger>
+            <DropdownMenu aria-label="Export whiteboard">
+              <DropdownItem key="png" onPress={() => exportBoard("png")}>Download PNG</DropdownItem>
+              <DropdownItem key="jpeg" onPress={() => exportBoard("jpeg")}>Download JPEG</DropdownItem>
+            </DropdownMenu>
+          </Dropdown>
           <div className="h-6 w-px bg-white/10"></div>
           <div className="flex items-center gap-2 px-2">
             <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="text-gray-400 hover:text-white"><Minus size={14} /></button>
