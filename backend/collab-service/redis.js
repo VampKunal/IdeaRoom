@@ -10,6 +10,7 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
   console.log("Redis using Upstash REST API");
+  module.exports = {
     get: (k) => { console.log(`[REDIS GET] ${k}`); return r.get(k).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
     set: (k, v) => { console.log(`[REDIS SET] ${k}`); return r.set(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
     hSet: (k, field, val) => { console.log(`[REDIS HSET] ${k} field: ${field}`); return r.hset(k, { [field]: val }).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
