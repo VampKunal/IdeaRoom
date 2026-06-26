@@ -1,15 +1,19 @@
 // Prefer Upstash REST when set: no persistent TCP, avoids "Socket closed unexpectedly" on Railway.
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  let restUrl = process.env.UPSTASH_REDIS_REST_URL;
+  if (!restUrl.startsWith('http')) {
+    restUrl = 'https://' + restUrl;
+  }
   const { Redis } = require("@upstash/redis");
   const r = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
+    url: restUrl,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
   console.log("Redis using Upstash REST API");
   module.exports = {
-    get: (k) => r.get(k),
-    set: (k, v) => r.set(k, v),
-    hSet: (k, field, val) => r.hset(k, { [field]: val }),
+    get: (k) => r.get(k).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    set: (k, v) => r.set(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    hSet: (k, field, val) => r.hset(k, { [field]: val }).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
     // Upstash REST may auto-parse JSON; ensure we return strings for consistency
     hGetAll: (k) => r.hgetall(k).then((o) => {
       if (!o) return {};
@@ -18,12 +22,12 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
         result[field] = typeof val === "string" ? val : JSON.stringify(val);
       }
       return result;
-    }),
-    hDel: (k, f) => r.hdel(k, f),
+    }).catch(e => { console.error("Redis REST Error:", e.message); return {}; }),
+    hDel: (k, f) => r.hdel(k, f).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
     hVals: (k) => r.hvals(k).then((a) => {
       if (!a) return [];
       return a.map(v => typeof v === "string" ? v : JSON.stringify(v));
-    }),
+    }).catch(e => { console.error("Redis REST Error:", e.message); return []; }),
   };
   // Skip TCP setup below
 } else {
