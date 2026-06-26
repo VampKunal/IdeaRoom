@@ -28,6 +28,11 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
       if (!a) return [];
       return a.map(v => typeof v === "string" ? v : JSON.stringify(v));
     }).catch(e => { console.error("Redis REST Error:", e.message); return []; }),
+    exists: (k) => r.exists(k).catch(e => { console.error("Redis REST Error:", e.message); return 0; }),
+    lRange: (k, s, e) => r.lrange(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return []; }),
+    rPush: (k, v) => r.rpush(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    lTrim: (k, s, e) => r.ltrim(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    expire: (k, s) => r.expire(k, s).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
   };
   // Skip TCP setup below
 } else {
