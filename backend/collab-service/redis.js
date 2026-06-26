@@ -10,29 +10,28 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
   console.log("Redis using Upstash REST API");
-  module.exports = {
-    get: (k) => r.get(k).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
-    set: (k, v) => r.set(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
-    hSet: (k, field, val) => r.hset(k, { [field]: val }).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    get: (k) => { console.log(`[REDIS GET] ${k}`); return r.get(k).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
+    set: (k, v) => { console.log(`[REDIS SET] ${k}`); return r.set(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
+    hSet: (k, field, val) => { console.log(`[REDIS HSET] ${k} field: ${field}`); return r.hset(k, { [field]: val }).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
     // Upstash REST may auto-parse JSON; ensure we return strings for consistency
-    hGetAll: (k) => r.hgetall(k).then((o) => {
+    hGetAll: (k) => { console.log(`[REDIS HGETALL] ${k}`); return r.hgetall(k).then((o) => {
       if (!o) return {};
       const result = {};
       for (const [field, val] of Object.entries(o)) {
         result[field] = typeof val === "string" ? val : JSON.stringify(val);
       }
       return result;
-    }).catch(e => { console.error("Redis REST Error:", e.message); return {}; }),
-    hDel: (k, f) => r.hdel(k, f).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
-    hVals: (k) => r.hvals(k).then((a) => {
+    }).catch(e => { console.error("Redis REST Error:", e.message); return {}; }); },
+    hDel: (k, f) => { console.log(`[REDIS HDEL] ${k} field: ${f}`); return r.hdel(k, f).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
+    hVals: (k) => { console.log(`[REDIS HVALS] ${k}`); return r.hvals(k).then((a) => {
       if (!a) return [];
       return a.map(v => typeof v === "string" ? v : JSON.stringify(v));
-    }).catch(e => { console.error("Redis REST Error:", e.message); return []; }),
-    exists: (k) => r.exists(k).catch(e => { console.error("Redis REST Error:", e.message); return 0; }),
-    lRange: (k, s, e) => r.lrange(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return []; }),
-    rPush: (k, v) => r.rpush(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
-    lTrim: (k, s, e) => r.ltrim(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
-    expire: (k, s) => r.expire(k, s).catch(e => { console.error("Redis REST Error:", e.message); return null; }),
+    }).catch(e => { console.error("Redis REST Error:", e.message); return []; }); },
+    exists: (k) => { console.log(`[REDIS EXISTS] ${k}`); return r.exists(k).catch(e => { console.error("Redis REST Error:", e.message); return 0; }); },
+    lRange: (k, s, e) => { console.log(`[REDIS LRANGE] ${k}`); return r.lrange(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return []; }); },
+    rPush: (k, v) => { console.log(`[REDIS RPUSH] ${k}`); return r.rpush(k, v).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
+    lTrim: (k, s, e) => { console.log(`[REDIS LTRIM] ${k}`); return r.ltrim(k, s, e).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
+    expire: (k, s) => { console.log(`[REDIS EXPIRE] ${k}`); return r.expire(k, s).catch(e => { console.error("Redis REST Error:", e.message); return null; }); },
   };
   // Skip TCP setup below
 } else {

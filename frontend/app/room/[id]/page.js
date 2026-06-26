@@ -1074,13 +1074,39 @@ export default function RoomPage({ params }) {
     // Closed loops -> circle or rect
     if (closureDist < boundsDiag * 0.3) {
       const ratio = w / h;
-      if (ratio > 0.75 && ratio < 1.35) {
+      
+      // Check if it's a circle
+      const centerX = minX + w/2;
+      const centerY = minY + h/2;
+      const radius = Math.max(w, h)/2;
+      
+      let circleErrorSum = 0;
+      let rectErrorSum = 0;
+
+      points.forEach(p => {
+        // Circle deviation
+        const dist = Math.hypot(p.x - centerX, p.y - centerY);
+        circleErrorSum += Math.abs(dist - radius);
+        
+        // Rect deviation
+        const dx = Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX));
+        const dy = Math.min(Math.abs(p.y - minY), Math.abs(p.y - maxY));
+        rectErrorSum += Math.min(dx, dy);
+      });
+
+      const avgCircleError = circleErrorSum / points.length;
+      const avgRectError = rectErrorSum / points.length;
+
+      // Only classify as circle if it closely follows the radius
+      if (ratio > 0.75 && ratio < 1.35 && avgCircleError < radius * 0.2) {
          return {
            type: "SHAPE", x: minX, y: minY,
            data: { shape: "circle", radius: Math.max(w, h)/2, color },
            strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
          };
-      } else {
+      } 
+      // Only classify as rect if points stay near the bounding box edges
+      else if (avgRectError < Math.max(w, h) * 0.15) {
          return {
            type: "SHAPE", x: minX, y: minY,
            data: { shape: "rect", width: w, height: h, color },
