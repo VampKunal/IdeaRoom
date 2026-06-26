@@ -1,3 +1,15 @@
+const http = require("http");
+
+// Dummy server to satisfy Render's Web Service port binding requirement
+const PORT = process.env.PORT || 8080;
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("Snapshot Worker is running\\n");
+});
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Snapshot Worker listening on port ${PORT}`);
+});
+
 const amqp = require("amqplib");
 const { MongoClient } = require("mongodb");
 

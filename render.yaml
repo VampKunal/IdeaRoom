@@ -2,6 +2,7 @@ services:
   - type: web
     name: api-gateway
     env: node
+    plan: free
     rootDir: backend/api-gateway
     buildCommand: npm install
     startCommand: npm start
@@ -12,12 +13,11 @@ services:
         value: production
       - key: CORS_ORIGIN
         value: "*" # Set to your frontend URL
-      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
-      # Add MONGO_URL
 
   - type: web
     name: auth-service
     env: node
+    plan: free
     rootDir: backend/auth-service
     buildCommand: npm install
     startCommand: npm start
@@ -28,11 +28,11 @@ services:
         value: production
       - key: CORS_ORIGIN
         value: "*" # Set to your frontend URL
-      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 
   - type: web
     name: collab-service
     env: node
+    plan: free
     rootDir: backend/collab-service
     buildCommand: npm install
     startCommand: npm start
@@ -48,12 +48,11 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
       - key: CORS_ORIGIN
         value: "*" # Set to your frontend URL
-      # Add MONGO_URL, REDIS_URL, RABBITMQ_URL/AMQP_URL, GEMINI_API_KEY
-      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 
-  - type: worker
+  - type: web
     name: snapshot-worker
     env: node
+    plan: free
     rootDir: backend/snapshot-worker
     buildCommand: npm install
     startCommand: npm start
