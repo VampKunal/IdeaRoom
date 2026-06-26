@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: api-gateway
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*" # Set to your frontend URL
+      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+      # Add MONGO_URL
+
+  - type: web
+    name: auth-service
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 8003
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*" # Set to your frontend URL
+      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+
+  - type: web
+    name: collab-service
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 4000
+      - key: NODE_ENV
+        value: production
+      - key: API_GATEWAY_URL
+        fromService:
+          name: api-gateway
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CORS_ORIGIN
+        value: "*" # Set to your frontend URL
+      # Add MONGO_URL, REDIS_URL, RABBITMQ_URL/AMQP_URL, GEMINI_API_KEY
+      # Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+
+  - type: worker
+    name: snapshot-worker
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Add MONGO_URL, RABBITMQ_URL/AMQP_URL

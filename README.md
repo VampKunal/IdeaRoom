@@ -9,7 +9,7 @@ Idea Room is a full-stack collaborative whiteboard platform that enables real-ti
 ### Key Features
 
 - **Real-time Collaboration**: Multiple users can work simultaneously with live cursor tracking
-- **Rich Drawing Tools**: Freehand drawing, shapes (rectangles, circles, triangles, diamonds), text, images
+- **Rich Drawing Tools**: Freehand drawing, shapes (rectangles, circles, triangles, diamonds, parallelogram, hexagon, cloud), arrows/edges, text, images
 - **Room Management**: Create, join, and manage collaborative rooms
 - **User Authentication**: Firebase Authentication for secure access
 - **Persistent Storage**: MongoDB for long-term data persistence, Redis for hot caching
@@ -17,6 +17,10 @@ Idea Room is a full-stack collaborative whiteboard platform that enables real-ti
 - **Undo/Redo**: Full history tracking for collaborative editing
 - **Pan & Zoom**: Navigate large canvases with smooth panning and zooming
 - **Minimap**: Visual overview of the entire canvas
+- **Export Whiteboard**: Download the canvas as **PNG** or **JPEG** (via `html2canvas`, with a safe color pipeline for modern CSS `lab`/`oklch` so exports don’t crash)
+- **Idle Cursor Hint**: After **30 seconds** without input, a subtle non-interactive ring appears at the last pointer position (does not block drawing)
+- **Dashboard Network Status**: Live **online/offline**, **Network Information API** (effective-type, downlink, RTT when available), and **API latency** via `GET /health` polling with a small history sparkline
+- **AI Chat (Room)**: Side panel chat; messages prefixed with `@ai` can attach a **screenshot of the board** for context (JPEG, client-side capture)
 
 ## 🏗️ Architecture
 
@@ -24,7 +28,8 @@ Idea Room is a full-stack collaborative whiteboard platform that enables real-ti
 - **Framework**: Next.js 16.1.1 (React 19.2.3)
 - **Styling**: Tailwind CSS 4
 - **Real-time**: Socket.IO Client
-- **UI Components**: HeroUI, Framer Motion
+- **UI Components**: HeroUI (buttons, dropdowns, toolbars), Framer Motion (home dashboard)
+- **Canvas export**: html2canvas + `app/lib/html2canvasSafe.js` (normalizes colors for the library)
 - **Authentication**: Firebase Client SDK
 
 ### Backend Services
@@ -58,7 +63,7 @@ Idea Room is a full-stack collaborative whiteboard platform that enables real-ti
 ## 📁 Project Structure
 
 ```
-idea-room/
+IdeaRoom/
 ├── backend/
 │   ├── api-gateway/          # REST API service
 │   │   ├── routes/            # API routes
@@ -75,13 +80,16 @@ idea-room/
 │   └── snapshot-worker/       # Background worker
 │       └── Dockerfile
 ├── frontend/                  # Next.js application
-│   ├── app/                   # Next.js app directory
+│   ├── app/
 │   │   ├── auth/              # Authentication page
-│   │   ├── room/[id]/         # Room page (dynamic)
-│   │   └── page.js            # Home/dashboard
-│   ├── components/            # React components
-│   ├── context/               # React context (Auth)
-│   ├── lib/                   # Utilities (API, Socket)
+│   │   ├── room/[id]/         # Whiteboard room (dynamic)
+│   │   ├── lib/               # api.js, socket.js, html2canvasSafe.js
+│   │   ├── page.js            # Home / dashboard
+│   │   ├── layout.js
+│   │   └── globals.css
+│   ├── components/            # RoomChat.js, BackgroundAnimation.js, …
+│   ├── context/               # Auth (AuthContext)
+│   ├── lib/                   # firebase.js (client config)
 │   └── Dockerfile
 ├── docker-compose.yml         # Docker orchestration
 └── .env                       # Environment variables (create this)
@@ -110,7 +118,7 @@ For production with **MongoDB Atlas**, **Upstash Redis**, **Railway RabbitMQ**, 
 
 ```bash
 git clone <repository-url>
-cd idea-room
+cd IdeaRoom
 ```
 
 ### Step 2: Set Up Firebase
@@ -142,7 +150,7 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour\nPrivate\nKey\nHere\n---
 
 ### Step 4: Configure Frontend Firebase
 
-Update `frontend/lib/firebase.js` with your Firebase web app configuration:
+Update `frontend/lib/firebase.js` with your Firebase web app configuration (or use env-based config if you add it):
 
 ```javascript
 const firebaseConfig = {
@@ -200,9 +208,11 @@ All backend services receive environment variables from:
 - `NODE_ENV`: Environment mode
 
 **Frontend:**
-- `NEXT_PUBLIC_API_BASE`: API Gateway URL (default: `http://localhost:5000`)
+- `NEXT_PUBLIC_API_BASE`: API Gateway URL (default: `http://localhost:5000`) — used for REST calls and **dashboard health** / latency checks (`GET /health`)
 - `NEXT_PUBLIC_COLLAB_BASE`: Collab/Socket.IO server URL (default: `http://localhost:4000`)
 - `NODE_ENV`: Environment mode
+
+**SEO / indexing:** The frontend does **not** set `noindex` by default. Add `robots` metadata in `app/layout.js` if you need to block crawlers in production.
 
 ## 📝 How Environment Variables Work
 
@@ -365,11 +375,13 @@ docker-compose down -v
 ## 🎨 Features in Detail
 
 ### Drawing Tools
-- **Freehand Drawing**: Smooth stroke rendering with point thinning
-- **Shapes**: Rectangle, Circle, Triangle, Diamond
+- **Freehand Drawing**: Smooth stroke rendering (perfect-freehand) with optional dashed/dotted styles
+- **Shapes**: Rectangle, circle, triangle, diamond, parallelogram, hexagon, cloud, and more
+- **Edges / Arrows**: Connect nodes with rough edges
 - **Text**: Editable text boxes with formatting
 - **Images**: Upload and place images on canvas
 - **Eraser**: Remove any object by clicking on it
+- **Export**: Top bar **Export** → **PNG** or **JPEG** (captures `#canvas-container`; uses `html2canvasSafe` so modern CSS colors don’t break the exporter)
 
 ### Collaboration
 - **Real-time Sync**: All changes sync instantly across clients
@@ -383,6 +395,10 @@ docker-compose down -v
 - **Selection**: Multi-select objects with selection box
 - **Group Operations**: Move, resize, delete multiple objects
 - **Undo/Redo**: Full history tracking
+- **Idle hint**: After 30s without input, a subtle ring at the last cursor position (pointer-events disabled)
+
+### Dashboard (Home)
+- **Network Status card**: Browser online state, connection quality hints, and measured API round-trip to `GET {NEXT_PUBLIC_API_BASE}/health`
 
 
 
