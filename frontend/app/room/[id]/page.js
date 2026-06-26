@@ -938,82 +938,64 @@ export default function RoomPage({ params }) {
 
   function addText() {
     if (!hasJoined) return;
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "TEXT",
-        x: (window.innerWidth / 2 - pan.x) / zoom - 60,
-        y: (window.innerHeight / 2 - pan.y) / zoom - 20,
-        fontSize,
-        fontWeight,
-        textAlign,
-        color,
-        data: {
-          text: "New Idea",
-          width: 120,
-          height: 40,
-        },
-      },
-    });
+    const newObj = {
+      id: crypto.randomUUID(),
+      type: "TEXT",
+      x: (window.innerWidth / 2 - pan.x) / zoom - 60,
+      y: (window.innerHeight / 2 - pan.y) / zoom - 20,
+      fontSize,
+      fontWeight,
+      textAlign,
+      color,
+      data: { text: "New Idea", width: 120, height: 40 },
+    };
+    setObjects((prev) => [...prev, newObj]);
+    connectSocket().emit("object-create", { roomId, object: newObj });
   }
 
   function addNode() {
     if (!hasJoined) return;
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "NODE",
-        x: 200,
-        y: 200,
-        data: { label: "New Node" },
-      },
-    });
+    const newObj = {
+      id: crypto.randomUUID(),
+      type: "NODE",
+      x: 200,
+      y: 200,
+      data: { label: "New Node" },
+    };
+    setObjects((prev) => [...prev, newObj]);
+    connectSocket().emit("object-create", { roomId, object: newObj });
   }
 
   function addShape(shape) {
     if (!hasJoined) return;
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "SHAPE",
-        x: (window.innerWidth / 2 - pan.x) / zoom - 70,
-        y: (window.innerHeight / 2 - pan.y) / zoom - 45,
-        // Style Props
-        strokeStyle,
-        strokeWidth,
-        opacity,
-        borderRadius: shape === "rect" ? borderRadius : 0,
-        data:
-          shape === "rect"
-            ? { shape: "rect", width: 140, height: 90, color: color || "#D0EBFF" }
-            : shape === "circle"
-              ? { shape: "circle", radius: 50, color: color || "#FFD8A8" }
-              : shape === "triangle"
-                ? { shape: "triangle", width: 100, height: 100, color: color || "#B2F2BB" }
-                : shape === "diamond"
-                  ? { shape: "diamond", width: 100, height: 100, color: color || "#FFEC99" }
-                  : shape === "parallelogram"
-                    ? { shape: "parallelogram", width: 140, height: 80, color: color || "#D0EBFF" }
-                    : shape === "hexagon"
-                      ? { shape: "hexagon", width: 120, height: 100, color: color || "#E5DBFF" }
-                      : { shape: "cloud", width: 150, height: 100, color: color || "#F1F3F5" },
-      },
-    });
+    const newObj = {
+      id: crypto.randomUUID(),
+      type: "SHAPE",
+      x: (window.innerWidth / 2 - pan.x) / zoom - 70,
+      y: (window.innerHeight / 2 - pan.y) / zoom - 45,
+      strokeStyle, strokeWidth, opacity,
+      borderRadius: shape === "rect" ? borderRadius : 0,
+      data: shape === "rect" ? { shape: "rect", width: 140, height: 90, color: color || "#D0EBFF" }
+          : shape === "circle" ? { shape: "circle", radius: 50, color: color || "#FFD8A8" }
+          : shape === "triangle" ? { shape: "triangle", width: 100, height: 100, color: color || "#B2F2BB" }
+          : shape === "diamond" ? { shape: "diamond", width: 100, height: 100, color: color || "#FFEC99" }
+          : shape === "parallelogram" ? { shape: "parallelogram", width: 140, height: 80, color: color || "#D0EBFF" }
+          : shape === "hexagon" ? { shape: "hexagon", width: 120, height: 100, color: color || "#E5DBFF" }
+          : { shape: "cloud", width: 150, height: 100, color: color || "#F1F3F5" },
+    };
+    setObjects((prev) => [...prev, newObj]);
+    connectSocket().emit("object-create", { roomId, object: newObj });
   }
 
   function createEdge(from, to) {
     if (!hasJoined) return;
-    connectSocket().emit("object-create", {
-      roomId,
-      object: {
-        id: crypto.randomUUID(),
-        type: "EDGE",
-        data: { from, to },
-      },
-    });
+    const newObj = {
+      id: crypto.randomUUID(),
+      type: "EDGE",
+      data: { from, to },
+    };
+    setObjects((prev) => [...prev, newObj]);
+    connectSocket().emit("object-create", { roomId, object: newObj });
   }
   function distance(a, b) {
     const dx = a.x - b.x;
