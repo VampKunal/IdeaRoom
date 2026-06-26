@@ -1052,6 +1052,44 @@ export default function RoomPage({ params }) {
   }
 
 
+  // Ramer-Douglas-Peucker (RDP) algorithm for shape simplification
+  function getSqSegDist(p, p1, p2) {
+    let x = p1.x, y = p1.y, dx = p2.x - x, dy = p2.y - y;
+    if (dx !== 0 || dy !== 0) {
+      const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy);
+      if (t > 1) { x = p2.x; y = p2.y; }
+      else if (t > 0) { x += dx * t; y += dy * t; }
+    }
+    dx = p.x - x; dy = p.y - y;
+    return dx * dx + dy * dy;
+  }
+
+  function simplifyDPStep(points, first, last, sqTolerance, simplified) {
+    let maxSqDist = sqTolerance;
+    let index = -1;
+    for (let i = first + 1; i < last; i++) {
+      const sqDist = getSqSegDist(points[i], points[first], points[last]);
+      if (sqDist > maxSqDist) {
+        index = i;
+        maxSqDist = sqDist;
+      }
+    }
+    if (index > 0) {
+      if (index - first > 1) simplifyDPStep(points, first, index, sqTolerance, simplified);
+      simplified.push(points[index]);
+      if (last - index > 1) simplifyDPStep(points, index, last, sqTolerance, simplified);
+    }
+  }
+
+  function simplifyDouglasPeucker(points, tolerance) {
+    if (points.length <= 2) return points;
+    const sqTolerance = tolerance * tolerance;
+    const simplified = [points[0]];
+    simplifyDPStep(points, 0, points.length - 1, sqTolerance, simplified);
+    simplified.push(points[points.length - 1]);
+    return simplified;
+  }
+
   function detectShapeHeuristic(points, color, width) {
     if (points.length < 15) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1064,56 +1102,81 @@ export default function RoomPage({ params }) {
 
     const w = maxX - minX;
     const h = maxY - minY;
-    if (w < 20 || h < 20) return null;
+    if (w < 25 || h < 25) return null; // Too small
 
     const start = points[0];
     const end = points[points.length - 1];
     const closureDist = Math.hypot(start.x - end.x, start.y - end.y);
     const boundsDiag = Math.hypot(w, h);
     
-    // Closed loops -> circle or rect
-    if (closureDist < boundsDiag * 0.3) {
-      const ratio = w / h;
-      
+    // Must be a relatively closed loop to be considered a standard shape
+    if (closureDist > boundsDiag * 0.35) return null;
+
+    // Simplify the stroke to find corners using RDP. 
+    // Tolerance based on the size of the drawing (e.g. 10% of the bounding box size)
+    const tolerance = Math.max(w, h) * 0.08;
+    const simplified = simplifyDouglasPeucker(points, tolerance);
+    
+    const corners = simplified.length - 1; // Number of segments
+    const ratio = w / h;
+    
+    // 1. TRIANGLE: 3 main segments (4 points because start and end overlap)
+    if (corners === 3 || corners === 4) {
+       // Only classify if it really looks like a triangle (not a squiggly line)
+       if (simplified.length >= 4) {
+         return {
+           type: "SHAPE", x: minX, y: minY,
+           data: { shape: "triangle", width: w, height: h, color },
+           strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
+         };
+       }
+    }
+
+    // 2. RECTANGLE / DIAMOND: 4 main segments (5 points)
+    if (corners === 4 || corners === 5) {
+       // Differentiate between Diamond and Rect based on bounding box fill or points
+       // Diamond usually has a ratio near 1.0 and points in the middle of edges
+       let isDiamond = false;
+       if (ratio > 0.8 && ratio < 1.2) {
+         // Check if vertices are near the midpoints of the bounding box edges
+         const midX = minX + w/2;
+         const midY = minY + h/2;
+         let topPoint = simplified.find(p => p.y < minY + h*0.25 && p.x > minX + w*0.25 && p.x < minX + w*0.75);
+         let rightPoint = simplified.find(p => p.x > minX + w*0.75 && p.y > minY + h*0.25 && p.y < minY + h*0.75);
+         if (topPoint && rightPoint) isDiamond = true;
+       }
+
+       return {
+         type: "SHAPE", x: minX, y: minY,
+         data: { shape: isDiamond ? "diamond" : "rect", width: w, height: h, color },
+         strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
+       };
+    }
+
+    // 3. CIRCLE: Many segments in the simplified loop (smooth curve)
+    if (corners > 5) {
       // Check if it's a circle
       const centerX = minX + w/2;
       const centerY = minY + h/2;
       const radius = Math.max(w, h)/2;
       
       let circleErrorSum = 0;
-      let rectErrorSum = 0;
-
       points.forEach(p => {
-        // Circle deviation
         const dist = Math.hypot(p.x - centerX, p.y - centerY);
         circleErrorSum += Math.abs(dist - radius);
-        
-        // Rect deviation
-        const dx = Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX));
-        const dy = Math.min(Math.abs(p.y - minY), Math.abs(p.y - maxY));
-        rectErrorSum += Math.min(dx, dy);
       });
-
       const avgCircleError = circleErrorSum / points.length;
-      const avgRectError = rectErrorSum / points.length;
 
-      // Only classify as circle if it closely follows the radius
-      if (ratio > 0.75 && ratio < 1.35 && avgCircleError < radius * 0.2) {
+      if (ratio > 0.75 && ratio < 1.35 && avgCircleError < radius * 0.25) {
          return {
            type: "SHAPE", x: minX, y: minY,
            data: { shape: "circle", radius: Math.max(w, h)/2, color },
            strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
          };
-      } 
-      // Only classify as rect if points stay near the bounding box edges
-      else if (avgRectError < Math.max(w, h) * 0.15) {
-         return {
-           type: "SHAPE", x: minX, y: minY,
-           data: { shape: "rect", width: w, height: h, color },
-           strokeWidth: width, color, opacity: 1, strokeStyle: "solid"
-         };
       }
     }
+    
+    // If it's closed but has too many squiggles (like writing), return null
     return null;
   }
 
