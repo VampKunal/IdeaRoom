@@ -16,7 +16,7 @@ async function connectDB() {
         return db;
     } catch (e) {
         console.error("MongoDB Connection Error:", e);
-        process.exit(1);
+        throw e;
     }
 }
 

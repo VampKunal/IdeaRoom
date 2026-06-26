@@ -55,7 +55,7 @@ const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:5000";
 // connect infra once (RabbitMQ and DB are async; they retry / handle on first use)
 connectRabbit().catch((err) => console.error("RabbitMQ connect failed:", err.message));
 const { connectDB, getDB } = require("./db");
-connectDB(); // async but global db var handles it
+connectDB().catch((err) => console.error("MongoDB connect failed:", err.message)); // async but global db var handles it
 
 
 // Middleware for Socket Auth
